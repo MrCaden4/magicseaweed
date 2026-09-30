@@ -1202,14 +1202,14 @@ def make_read(day, water, suit):
     else:
         head = "Big. Sets are real. Respect it." if wind_word in ("glassy", "lightly textured", None) else f"Big and {wind_word}. Watch from the pier."
     parts = []
+    if sun.get("kind") == "sunrise":
+        parts.append(f"Sunny from first light ({fmt_time(parse_iso(day['sun']['first_light']))}).")
+    elif sun.get("kind") == "crossing" and sun.get("time"):
+        parts.append(f"Sun breaks through around {fmt_time(parse_iso(sun['time']))}.")
+    elif sun.get("kind") == "cloudy":
+        parts.append("No sun before 3 PM.")
     if suit:
         parts.append(suit["name"] + ".")
-    if sun.get("kind") == "sunrise":
-        parts.append("Sunny from first light.")
-    elif sun.get("kind") == "crossing" and sun.get("time"):
-        parts.append(f"Sun out around {fmt_time(parse_iso(sun['time']))}.")
-    elif sun.get("kind") == "cloudy":
-        parts.append("Gloomy all morning.")
     if win:
         parts.append(f"Best window {win['label']}.")
     return {"headline": head, "sub": " ".join(parts), "size": size, "wind": wind_word}

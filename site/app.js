@@ -172,7 +172,7 @@
     const so = day.sun_out || {};
     const sunVal = so.kind === 'sunrise' ? fmt.hm(day.sun.sunrise) : so.kind === 'crossing' ? fmt.hm(so.time) : so.kind === 'cloudy' ? 'Gloomy' : '—';
     const sunUnit = so.kind === 'sunrise' ? fmt.time(day.sun.sunrise).slice(-2) : so.kind === 'crossing' ? fmt.time(so.time).slice(-2) : '';
-    const sunNote = so.kind === 'sunrise' ? `sunny from sunrise` : so.kind === 'crossing' ? `sunrise ${fmt.time(day.sun.sunrise)}` : so.kind === 'cloudy' ? 'clouds hold past 3 PM' : 'no sky forecast';
+    const sunNote = so.kind === 'sunrise' ? `sunny from first light (${fmt.time(day.sun.first_light)})` : so.kind === 'crossing' ? `sun breaks through the clouds · first light ${fmt.time(day.sun.first_light)}` : so.kind === 'cloudy' ? 'clouds hold past 3 PM' : 'no sky forecast';
     setKpi('sun', sunVal, sunUnit, sunNote + (so.confidence ? ` · ${so.confidence} confidence` : ''));
 
     const win = day.window;
@@ -242,19 +242,22 @@
     // overlays on the sky row: sunrise line, sun-out dot
     const ov = el('div', { class: 'overlay' });
     const sr = day.sun?.sunrise;
-    if (sr) {
-      const x = pct(sr);
-      ov.append(el('div', { class: 'marker sunrise', style: `left:${x}%` }));
-      ov.append(el('div', { class: 'marker-lbl hide-narrow', style: `left:${x}%; top:-22px`, text: `sunrise ${fmt.hm(sr)}` }));
+    const fl = day.sun?.first_light;
+    if (fl) {
+      const x = pct(fl);
+      ov.append(el('div', { class: 'marker first-light', style: `left:${x}%` }));
+      ov.append(el('div', { class: 'marker-lbl hide-narrow', style: `left:${x}%; top:-22px`, text: `first light ${fmt.hm(fl)}` }));
     }
+    if (sr) ov.append(el('div', { class: 'marker sunrise', style: `left:${pct(sr)}%`, title: `sunrise ${fmt.time(sr)}` }));
     const so = day.sun_out || {};
     if (so.kind === 'crossing' && so.time) {
       const x = pct(so.time);
       ov.append(el('div', { class: 'sun-dot', style: `left:${x}%; top:50%` }));
       ov.append(el('div', { class: 'marker-lbl gold', style: `left:${x}%; top:-22px`, text: `sun out ${fmt.hm(so.time)}` }));
-    } else if (so.kind === 'sunrise' && sr) {
-      const x = pct(sr);
+    } else if (so.kind === 'sunrise' && fl) {
+      const x = pct(fl);
       ov.append(el('div', { class: 'sun-dot', style: `left:${x}%; top:50%` }));
+      ov.append(el('div', { class: 'marker-lbl gold', style: `left:${x}%; top:-22px`, text: `sunny from ${fmt.hm(fl)}` }));
     }
     skyCells.append(ov);
 
@@ -272,6 +275,16 @@
       el('span', {}, [el('i', { class: 'sw wind' }), 'calm → 18 mph, arrow shows where the wind blows to']),
     ]));
 
+    // the headline sun line
+    const sunLine = $('#sun-line');
+    clear(sunLine);
+    const SUN_ICO = '<svg class="sun-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+    sunLine.insertAdjacentHTML('beforeend', SUN_ICO);
+    if (so.kind === 'crossing' && so.time) sunLine.append(`Sun breaks through at ${fmt.time(so.time)}`, el('small', { text: ` · first light ${fmt.time(fl)}` }));
+    else if (so.kind === 'sunrise') sunLine.append(`Sunny from first light, ${fmt.time(fl)}`);
+    else if (so.kind === 'cloudy') sunLine.append('Clouds all morning, no sun before 3 PM', el('small', { text: ` · first light ${fmt.time(fl)}` }));
+    else sunLine.append('No sky forecast yet');
+
     // notes
     const note = $('#sun-note');
     clear(note);
@@ -282,7 +295,7 @@
     } else if (so.kind === 'crossing' && so.model_time && so.confidence === 'high') {
       bits.push(`The weather model agrees (${fmt.time(so.model_time)}).`);
     }
-    if (day.sun?.first_light) bits.push(`First light ${fmt.time(day.sun.first_light)}, sunset ${fmt.time(day.sun.sunset)}.`);
+    if (day.sun?.first_light) bits.push(`First light ${fmt.time(day.sun.first_light)}, sunrise ${fmt.time(day.sun.sunrise)}, sunset ${fmt.time(day.sun.sunset)}.`);
     note.textContent = bits.join(' ');
 
     const afd = $('#afd');
@@ -534,7 +547,7 @@
     const uv = day.uv;
     const grid = el('div', { class: 'stat-grid' });
     grid.append(stat('High / low', `${w.high_f != null ? fmt.deg(w.high_f) : '—'} / ${w.low_f != null ? fmt.deg(w.low_f) : '—'}`, w.short || ''));
-    grid.append(stat('Sunrise', fmt.time(day.sun?.sunrise), `first light ${fmt.time(day.sun?.first_light)}`));
+    grid.append(stat('First light', fmt.time(day.sun?.first_light), `sunrise ${fmt.time(day.sun?.sunrise)}`));
     grid.append(stat('Sunset', fmt.time(day.sun?.sunset), `last light ${fmt.time(day.sun?.last_light)}`));
     if (uv) grid.append(stat('UV peak', `${fmt.num(uv.peak, 1)}`, `${uv.peak_label}${uv.burn_label ? ` · burn window ${uv.burn_label}` : ' · below burn threshold'}`));
     if (data.now && state.dayIndex === 0) grid.append(stat('Right now', data.now.temp_f != null ? fmt.deg(data.now.temp_f) : '—', [data.now.short, data.now.wind_txt ? `wind ${data.now.wind_txt} ${data.now.wind_dir || ''}` : null].filter(Boolean).join(' · ')));
