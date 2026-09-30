@@ -1,0 +1,6 @@
+#YY  MM DD hh mm WVHT  SwH  SwP  WWH  WWP SwD WWD  STEEPNESS  APD MWD
+#yr  mo dy hr mn    m    m  sec    m  sec  -  degT     -      sec degT
+2026 09 30 02 00  0.8  0.7 12.9  0.4  4.5  S SSW   AVERAGE  6.5 170
+2026 09 30 01 30  0.8  0.7 12.9  0.4  4.5  S SSW   AVERAGE  6.5 170
+2026 09 30 01 00  0.8  0.7 12.9  0.4  4.5  S SSW   AVERAGE  6.5 170
+2026 09 30 00 30  0.8  0.7 12.9  0.4  4.5  S SSW   AVERAGE  6.5 170

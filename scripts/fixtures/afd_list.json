@@ -1,0 +1,1 @@
+{"@graph": [{"@id": "https://api.weather.gov/products/def", "id": "def", "issuingOffice": "KSGX", "issuanceTime": "2026-09-30T10:00:00+00:00", "productCode": "AFD", "productName": "Area Forecast Discussion"}]}
