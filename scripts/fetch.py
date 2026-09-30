@@ -400,12 +400,41 @@ def latest_product(src, key, office, code):
     return latest.get("issuanceTime"), prod.get("productText") or ""
 
 
-FIELD_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 /()'-]*?)\s*\.{2,}\s*(.*?)\s*$")
+FIELD_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 /()'*-]*?)\s*\.{2,}\s*(.*?)\s*$")
+HEADLINE_RE = re.compile(r"^\.\.\.(.+?)\.\.\.$")
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+def period_token_date(tok, issue_date):
+    t = re.sub(r"\b(night|evening|afternoon|morning|late|early|rest of|remainder of)\b", " ", tok.lower())
+    t = " ".join(t.split())
+    if not t or t in ("today", "tonight", "this", "overnight"):
+        return issue_date
+    if t == "tomorrow":
+        return issue_date + timedelta(days=1)
+    for i, wd in enumerate(WEEKDAYS):
+        if wd in t:
+            return issue_date + timedelta(days=(i - issue_date.weekday()) % 7)
+    return None
+
+
+def period_dates(name, issue_date):
+    """Dates a forecast period covers: 'This Afternoon Through Wednesday' -> [Tue, Wed]."""
+    if issue_date is None:
+        return []
+    parts = re.split(r"\s+(?:through|thru|-)\s+", name.strip(), flags=re.I)
+    start = period_token_date(parts[0], issue_date)
+    end = period_token_date(parts[-1], issue_date) if len(parts) > 1 else start
+    if start is None:
+        return []
+    if end is None or end < start:
+        end = start
+    return [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
 PERIOD_RE = re.compile(r"^\.([A-Z][A-Z ]+?)\.\.\.\s*(.*)$")
 ZONE_CODE_RE = re.compile(r"^[A-Z]{2}Z\d{3}")
 
 
-def parse_srf(text, keyword):
+def parse_srf(text, keyword, issue_date=None):
     """Pull our zone out of a Surf Zone Forecast and split it into periods."""
     lines = text.splitlines()
     start = None
@@ -423,36 +452,45 @@ def parse_srf(text, keyword):
             break
     block = lines[start:end]
     periods = []
+    headlines = []
     current = None
     last_key = None
+
+    def add_field(per, key, val):
+        key = key.replace("*", "").strip().lower()
+        per["fields"][key] = val.strip()
+        per["order"].append(key)
+        return key
+
     for raw in block:
         line = raw.rstrip()
         if not line.strip():
             continue
+        hm = HEADLINE_RE.match(line.strip())
+        if hm and current is None:
+            headlines.append(re.sub(r"\b([AP])m\b", lambda m: m.group(1) + "M", hm.group(1).strip().title()))
+            continue
         pm = PERIOD_RE.match(line.strip())
         if pm:
-            current = {"name": pm.group(1).title(), "fields": {}, "order": []}
+            current = {"name": pm.group(1).title(), "fields": {}, "order": [],
+                       "dates": period_dates(pm.group(1), issue_date)}
             periods.append(current)
             last_key = None
             rest = pm.group(2).strip()
             if rest:
                 fm = FIELD_RE.match(rest)
                 if fm:
-                    key = fm.group(1).strip().lower()
-                    current["fields"][key] = fm.group(2).strip()
-                    current["order"].append(key)
-                    last_key = key
+                    last_key = add_field(current, fm.group(1), fm.group(2))
             continue
         if current is None:
             continue
         fm = FIELD_RE.match(line)
-        if fm:
-            key = fm.group(1).strip().lower()
-            current["fields"][key] = fm.group(2).strip()
-            current["order"].append(key)
-            last_key = key
-        elif last_key and line.startswith((" ", "\t")):
-            current["fields"][last_key] = (current["fields"][last_key] + " " + line.strip()).strip()
+        indented = line.startswith((" ", "\t"))
+        if fm and not (indented and last_key):
+            last_key = add_field(current, fm.group(1), fm.group(2))
+        elif last_key and indented:
+            extra = f"{fm.group(1).replace('*', '').strip()}: {fm.group(2).strip()}" if fm else line.strip()
+            current["fields"][last_key] = (current["fields"][last_key] + " " + extra).strip()
     for per in periods:
         f = per["fields"]
         surf_txt = next((f[k] for k in per["order"] if k.startswith("surf") and "condition" not in k), None)
@@ -469,13 +507,16 @@ def parse_srf(text, keyword):
         water_txt = next((f[k] for k in per["order"] if "water temp" in k), None)
         wn = num_list(water_txt) if water_txt else []
         per["water_f"] = sum(wn) / len(wn) if wn else None
+        per["water_txt"] = water_txt
         per["rip"] = next((f[k] for k in per["order"] if "rip" in k), None)
-    return {"found": True, "zone_header": block[0].strip(), "periods": periods}
+        per["remarks"] = next((f[k] for k in per["order"] if k.startswith("remark") or k.startswith("swell")), None)
+    return {"found": True, "zone_header": block[0].strip(), "headlines": headlines, "periods": periods}
 
 
 def fetch_nws_srf(src, points):
     issued, text = latest_product(src, "srf", points["office"], "SRF")
-    parsed = parse_srf(text, LOC.get("srf_zone_keyword", "Orange County"))
+    issue_date = parse_iso(issued).date() if issued else now_local().date()
+    parsed = parse_srf(text, LOC.get("srf_zone_keyword", "Orange County"), issue_date)
     parsed["issued"] = issued
     parsed["office"] = points["office"]
     return parsed
@@ -686,18 +727,18 @@ def fetch_tides(src, today):
 def fetch_epa_uv(src, today):
     url = f"https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/ZIP/{LOC['zip']}/JSON"
     data = src.json("epa_uv", url)
-    rows = []
+    days = {}
     for item in data:
         raw = item.get("DATE_TIME", "")
         try:
             t = datetime.strptime(raw, "%b/%d/%Y %I %p").replace(tzinfo=TZ)
         except ValueError:
             continue
-        if t.date() == today:
-            rows.append({"time": iso(t), "uv": float(item.get("UV_VALUE", 0))})
-    if not rows:
-        raise RuntimeError("EPA UV has no rows for today")
-    return {"rows": rows}
+        if t.date() >= today:
+            days.setdefault(t.date().isoformat(), []).append({"time": iso(t), "uv": float(item.get("UV_VALUE", 0))})
+    if not days:
+        raise RuntimeError("EPA UV has no rows for today or later")
+    return {"days": days}
 
 
 # ---------------------------------------------------------------- analysis
@@ -783,6 +824,11 @@ def hour_rows(d, sec):
             row["swell_ft"] = m.get("swell_wave_height")
             row["swell_period_s"] = m.get("swell_wave_period")
             row["swell_deg"] = m.get("swell_wave_direction")
+            row["swell2_ft"] = m.get("secondary_swell_wave_height")
+            row["swell2_period_s"] = m.get("secondary_swell_wave_period")
+            row["swell2_deg"] = m.get("secondary_swell_wave_direction")
+            row["windwave_ft"] = m.get("wind_wave_height")
+            row["windwave_period_s"] = m.get("wind_wave_period")
             row["sst_f"] = m.get("sea_surface_temperature")
         row["quality"] = wind_quality(row.get("wind_mph"), row.get("wind_deg"))
         rows.append(row)
@@ -850,20 +896,35 @@ def sun_out_analysis(d, rows, sun):
     elif nws_kind != "no data" and om_kind != "no data":
         confidence = "low"
     # narrative
-    bits = []
-    if at_sunrise is not None:
-        bits.append(f"{int(at_sunrise)}% cloud at sunrise")
-    if fog_early:
-        bits.append("patchy fog early")
-    if primary_kind == "crossing":
+    key = "cloud" if primary_src == "nws" else "cloud_model"
+    relapse = None
+    if primary_t is not None:
+        for r in rows:
+            if primary_t.hour < r["hour"] <= 13 and r.get(key) is not None and r[key] > 65:
+                relapse = r["hour"]
+                break
+    if primary_kind == "sunrise":
+        c = int(at_sunrise) if at_sunrise is not None else None
+        if c is None or c < 20:
+            note = "Clear from first light, no marine layer to burn off."
+        else:
+            note = f"Mostly sunny from first light ({c}% cloud), no marine layer to burn off."
+    elif primary_kind == "crossing":
+        bits = []
+        if at_sunrise is not None:
+            bits.append(f"{int(at_sunrise)}% cloud at sunrise")
+        if fog_early:
+            bits.append("patchy fog early")
         if thin_h is not None and thin_h < primary_t.hour:
             bits.append(f"thinning by {thin_h % 12 or 12}")
         bits.append(f"breaks up around {fmt_time(primary_t)}")
-    elif primary_kind == "sunrise":
-        bits.append("clear skies from first light")
+        note = bits[0][0].upper() + ", ".join(bits)[1:] + "."
     elif primary_kind == "cloudy":
-        bits.append("marine layer holds through early afternoon")
-    note = (bits[0][0].upper() + ", ".join(bits)[1:] + ".") if bits else None
+        note = (f"{int(at_sunrise)}% cloud at sunrise, " if at_sunrise is not None else "") + "marine layer holds through early afternoon."
+    else:
+        note = None
+    if note and relapse is not None:
+        note += f" Clouds may fill back in around {relapse % 12 or 12} {'AM' if relapse < 12 else 'PM'}."
     return {
         "time": iso(primary_t),
         "kind": primary_kind,
@@ -918,8 +979,19 @@ def best_window(d, rows, sun, tide_curve):
         "hours": best[1] - best[0] + 1,
         "quality": quals,
         "tide": tide,
-        "why": "glassy" if all(q in ("glassy", "offshore") for q in quals) else "light wind",
+        "why": ("glassy" if all(q in ("glassy", "offshore") for q in quals)
+                else "light wind all morning" if best[0] == start_h and best[1] >= end_h else "light wind"),
     }
+
+
+def effective_height(swell_ft, swell2_ft, windwave_ft, wave_ft):
+    """Height that matters for surf: swell trains in full, wind chop at half weight."""
+    parts = [x for x in (swell_ft, swell2_ft) if x is not None]
+    if not parts:
+        return wave_ft
+    if windwave_ft is not None:
+        parts.append(0.5 * windwave_ft)
+    return math.sqrt(sum(p * p for p in parts))
 
 
 def surf_estimate(wave_ft, period):
@@ -951,15 +1023,9 @@ def surf_range_text(low, high, sets=None):
 def srf_period_for(srf, d, today):
     if not srf or not srf.get("found"):
         return None
-    names = []
-    if d == today:
-        names = ["today", "this afternoon", "rest of today"]
-    elif d == today + timedelta(days=1):
-        names = ["tomorrow", d.strftime("%A").lower()]
-    else:
-        names = [d.strftime("%A").lower()]
+    iso_d = d.isoformat()
     for per in srf.get("periods", []):
-        if per["name"].lower() in names:
+        if iso_d in (per.get("dates") or []):
             return per
     return None
 
@@ -972,13 +1038,19 @@ def day_surf(d, rows, sec, today):
     if morning:
         mid = morning[len(morning) // 2]
         wave = sum(r["wave_ft"] for r in morning) / len(morning)
+        eff = sum(effective_height(r.get("swell_ft"), r.get("swell2_ft"), r.get("windwave_ft"), r["wave_ft"]) for r in morning) / len(morning)
+        period = mid.get("swell_period_s") or mid.get("wave_period_s")
         model = {
             "wave_ft": round(wave, 1),
+            "effective_ft": round(eff, 1),
             "period_s": mid.get("wave_period_s"),
             "dir_deg": mid.get("wave_deg"), "dir": compass(mid.get("wave_deg")),
-            "swell_ft": mid.get("swell_ft"), "swell_period_s": mid.get("swell_period_s"),
+            "swell_ft": r1(mid.get("swell_ft")), "swell_period_s": mid.get("swell_period_s"),
             "swell_deg": mid.get("swell_deg"), "swell_dir": compass(mid.get("swell_deg")),
-            "estimate": surf_estimate(wave, mid.get("wave_period_s")),
+            "swell2_ft": r1(mid.get("swell2_ft")), "swell2_period_s": mid.get("swell2_period_s"),
+            "swell2_dir": compass(mid.get("swell2_deg")),
+            "windwave_ft": r1(mid.get("windwave_ft")), "windwave_period_s": mid.get("windwave_period_s"),
+            "estimate": surf_estimate(eff, period),
         }
     out = {"official": None, "model": model}
     if official:
@@ -988,7 +1060,9 @@ def day_surf(d, rows, sec, today):
             "text": surf_range_text(official.get("surf_low"), official.get("surf_high"), official.get("surf_sets")),
             "fields": [{"k": k.capitalize(), "v": official["fields"][k]} for k in official["order"]],
             "rip": official.get("rip"),
+            "remarks": official.get("remarks"),
             "water_f": official.get("water_f"),
+            "water_txt": official.get("water_txt"),
         }
     # headline numbers: official first, model estimate second
     if official and official.get("surf_low") is not None:
@@ -1064,13 +1138,13 @@ def day_weather(d, sec, rows):
     }
 
 
-def day_uv(rows, epa):
+def day_uv(rows, epa_rows):
     pts = [(r["hour"], r["uv"]) for r in rows if r.get("uv") is not None]
-    if epa and epa.get("rows"):
-        pts = [(parse_iso(r["time"]).hour, r["uv"]) for r in epa["rows"]]
-        src = "epa"
-    else:
-        src = "model"
+    src = "model"
+    if epa_rows:
+        epts = [(parse_iso(r["time"]).hour, r["uv"]) for r in epa_rows]
+        if sum(1 for h, _ in epts if 10 <= h <= 14) >= 3:
+            pts, src = epts, "epa"
     if not pts:
         return None
     peak_h, peak = max(pts, key=lambda p: p[1])
@@ -1114,19 +1188,19 @@ def make_read(day, water, suit):
     wind_word = None
     if dawn_q:
         worst = max(QUALITY_RANK.get(q, 3) for q in dawn_q)
-        wind_word = ["glassy", "clean", "bumpy", "blown out"][min(worst, 3)]
+        wind_word = ["glassy", "lightly textured", "bumpy", "blown out"][min(worst, 3)]
     if size is None:
         head = "No surf forecast yet."
     elif size == "Flat":
         head = "Flat. Longboard or coffee."
     elif size in ("Tiny", "Small"):
-        head = f"{size} and {wind_word} at dawn. Fun longboard morning." if wind_word in ("glassy", "clean") else f"{size} and {wind_word or 'windy'}. Not worth rushing."
+        head = f"{size} and {wind_word} at dawn. Fun longboard morning." if wind_word in ("glassy", "lightly textured") else f"{size} and {wind_word or 'windy'}. Not worth rushing."
     elif size == "Fun-size":
-        head = f"Fun-size and {wind_word} at dawn. Worth the alarm." if wind_word in ("glassy", "clean") else f"Fun-size but {wind_word or 'windy'}. Pick your window."
+        head = f"Fun-size and {wind_word} at dawn. Worth the alarm." if wind_word in ("glassy", "lightly textured") else f"Fun-size but {wind_word or 'windy'}. Pick your window."
     elif size == "Solid":
-        head = f"Solid swell, {wind_word} early. Get out there." if wind_word in ("glassy", "clean") else f"Solid but {wind_word or 'windy'}. Hunt the corners."
+        head = f"Solid swell, {wind_word} early. Get out there." if wind_word in ("glassy", "lightly textured") else f"Solid but {wind_word or 'windy'}. Hunt the corners."
     else:
-        head = "Big. Sets are real. Respect it." if wind_word in ("glassy", "clean", None) else f"Big and {wind_word}. Watch from the pier."
+        head = "Big. Sets are real. Respect it." if wind_word in ("glassy", "lightly textured", None) else f"Big and {wind_word}. Watch from the pier."
     parts = []
     if suit:
         parts.append(suit["name"] + ".")
@@ -1153,12 +1227,16 @@ def build_week(sec, today):
         if not allday:
             continue
         ref = morning[len(morning) // 2] if morning else allday[len(allday) // 2]
-        wave = sum(r["wave_height"] for r in (morning or allday)) / len(morning or allday)
-        est = surf_estimate(wave, ref.get("wave_period"))
+        pool = morning or allday
+        wave = sum(r["wave_height"] for r in pool) / len(pool)
+        eff = sum(effective_height(r.get("swell_wave_height"), r.get("secondary_swell_wave_height"),
+                                   r.get("wind_wave_height"), r["wave_height"]) for r in pool) / len(pool)
+        est = surf_estimate(eff, ref.get("swell_wave_period") or ref.get("wave_period"))
         omd = next((x for x in om_daily if x["date"] == d.isoformat()), None)
         days.append({
             "date": d.isoformat(), "label": d.strftime("%a"),
             "wave_ft": round(wave, 1), "wave_max_ft": round(max(r["wave_height"] for r in allday), 1),
+            "effective_ft": round(eff, 1),
             "period_s": ref.get("wave_period"), "dir": compass(ref.get("wave_direction")), "dir_deg": ref.get("wave_direction"),
             "swell_ft": ref.get("swell_wave_height"), "swell_period_s": ref.get("swell_wave_period"),
             "swell_dir": compass(ref.get("swell_wave_direction")),
@@ -1280,7 +1358,7 @@ def build(src, prev):
         window = best_window(d, rows, sun, tide_curve)
         surf = day_surf(d, rows, sections, today)
         weather = day_weather(d, sections, rows)
-        uv = day_uv(rows, sections.get("epa_uv") if offset == 0 else None)
+        uv = day_uv(rows, ((sections.get("epa_uv") or {}).get("days") or {}).get(d.isoformat()))
         sunrise = parse_iso(sun["sunrise"])
         dawn_temps = [rows[h].get("temp_f") for h in range(max(sunrise.hour - 1, 0), min(sunrise.hour + 2, 24))
                       if rows[h].get("temp_f") is not None]

@@ -26,7 +26,7 @@
   },
   "wind": {
     "glassy_max_mph": 4,
-    "light_max_mph": 9,
+    "light_max_mph": 10,
     "bumpy_max_mph": 14,
     "offshore_center_deg": 35,
     "offshore_half_width_deg": 60

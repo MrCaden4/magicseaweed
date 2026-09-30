@@ -1,1 +1,1 @@
-{"@graph": [{"@id": "https://api.weather.gov/products/abc", "id": "abc", "wmoCollectiveId": "FZUS56", "issuingOffice": "KSGX", "issuanceTime": "2026-09-30T09:00:00+00:00", "productCode": "SRF", "productName": "Surf Forecast"}]}
+{"@graph": [{"@id": "https://api.weather.gov/products/abc", "id": "abc", "wmoCollectiveId": "FZUS56", "issuingOffice": "KSGX", "issuanceTime": "2026-09-30T09:12:00+00:00", "productCode": "SRF", "productName": "Surf Forecast"}]}

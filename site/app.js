@@ -309,17 +309,20 @@
 
     const grid = el('div', { class: 'stat-grid' });
     grid.append(stat('Surf', surf.text ? surf.text.replace(/, sets.*$/, '') : '—', surf.sets ? `sets to ${fmt.ft(surf.sets)} ft` : (surf.source === 'model' ? 'model estimate' : '')));
-    if (model) grid.append(stat('Swell', model.swell_ft != null ? `${fmt.ft(model.swell_ft)} ft` : '—', `${model.swell_period_s ? `${fmt.num(model.swell_period_s)}s` : ''} ${model.swell_dir || ''}${model.swell_deg != null ? ` (${Math.round(model.swell_deg)}°)` : ''}`.trim()));
+    if (model) grid.append(stat('Swell (model)', model.swell_ft != null ? `${fmt.ft(model.swell_ft)} ft` : '—',
+      [`${model.swell_period_s ? `${fmt.num(model.swell_period_s)}s` : ''} ${model.swell_dir || ''}${model.swell_deg != null ? ` (${Math.round(model.swell_deg)}°)` : ''}`.trim(),
+        model.swell2_ft ? `+ ${fmt.ft(model.swell2_ft)} ft @ ${fmt.num(model.swell2_period_s)}s ${model.swell2_dir || ''}` : null].filter(Boolean).join(' · ')));
     if (official?.rip) grid.append(stat('Rip risk', official.rip.replace(/\.$/, ''), ''));
     host.append(grid);
 
     if (official?.fields?.length) {
       const dl = el('dl', { class: 'kv' });
       for (const f of official.fields) {
-        if (/sunrise|uv index|max temperature/i.test(f.k)) continue;
-        dl.append(el('dt', { text: f.k }), el('dd', { text: f.v }));
+        if (/sunrise|uv index|max temperature|tides|thunderstorm/i.test(f.k) || !f.v) continue;
+        const label = f.k.replace(/^Remarks$/i, 'Swell').replace(/^Surf height$/i, 'Surf');
+        dl.append(el('dt', { text: label }), el('dd', {}, [/^surf$/i.test(label) ? el('b', { text: f.v }) : f.v]));
       }
-      host.append(el('p', { class: 'card-meta', text: `NWS surf zone forecast for ${official.period.toLowerCase()}${data.srf?.issued ? `, issued ${fmt.dateShort(data.srf.issued)}` : ''}` }), dl);
+      host.append(el('p', { class: 'card-meta', text: `NWS surf zone forecast, ${official.period.toLowerCase()}${data.srf?.issued ? `, issued ${fmt.dateShort(data.srf.issued)}` : ''}` }), dl);
     } else {
       host.append(el('p', { class: 'note', text: 'NWS surf zone forecast unavailable for this day. Numbers above are a model estimate from open-water wave height.' }));
     }
@@ -329,8 +332,9 @@
       const dl = el('dl', { class: 'kv' });
       for (const b of buoys) {
         const parts = [];
-        if (b.wvht_ft != null) parts.push(`${fmt.ft(b.wvht_ft)} ft @ ${fmt.num(b.dpd_s)}s${b.mwd ? ` from ${b.mwd}` : ''}${b.mwd_deg != null ? ` (${Math.round(b.mwd_deg)}°)` : ''}`);
         if (b.spec?.swell_ft != null) parts.push(`swell ${fmt.ft(b.spec.swell_ft)} ft @ ${fmt.num(b.spec.swell_period_s)}s ${b.spec.swell_dir || ''}`.trim());
+        if (b.wvht_ft != null) parts.push(`${parts.length ? 'total ' : ''}${fmt.ft(b.wvht_ft)} ft @ ${fmt.num(b.dpd_s)}s${b.mwd ? ` from ${b.mwd}` : ''}`);
+        if (b.spec?.windwave_ft != null && b.spec.windwave_ft >= 1) parts.push(`chop ${fmt.ft(b.spec.windwave_ft)} ft @ ${fmt.num(b.spec.windwave_period_s)}s`);
         if (b.wtmp_f != null) parts.push(`water ${fmt.deg(b.wtmp_f)}`);
         const dd = el('dd', {}, [el('b', { text: parts[0] || '—' }), parts.length > 1 ? ` · ${parts.slice(1).join(' · ')}` : '']);
         dd.append(el('span', { class: 'card-meta', text: b.time ? ` · ${ago(b.time)}` : '' }));
@@ -379,7 +383,8 @@
     if (suit?.alt) host.append(el('div', { class: 'suit-alt' }, [el('b', { text: `${suit.alt.name} ` }), suit.alt.why]));
     if (suit?.reasons?.length) host.append(el('ul', { class: 'reasons' }, suit.reasons.map((r) => el('li', { text: r }))));
     const others = (water.all || []).filter((c) => c.source !== water.source);
-    const meta = [water.note];
+    const srfWater = day.surf?.official?.water_txt;
+    const meta = [srfWater && water.kind === 'nearshore' ? `NWS surf zone forecast says ${srfWater.replace(/\.$/, '')}.` : water.note];
     if (others.length) meta.push(`Other readings: ${others.map((c) => `${c.source} ${fmt.deg(c.f)}`).join(', ')}.`);
     host.append(el('p', { class: 'card-meta', text: meta.join(' ') }));
   }
