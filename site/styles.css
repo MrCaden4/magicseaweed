@@ -370,3 +370,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---------------------------------------------------------------- sun emphasis */
+.kpi-hero .kpi-label { color: var(--accent-text); }
+.kpi-hero .kpi-value { color: var(--accent-text); }
+.sun-line { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 600; color: var(--ink); }
+.sun-line .sun-ico { width: 22px; height: 22px; color: var(--accent); flex: none; }
+.sun-line small { font-weight: 500; color: var(--ink-2); font-size: 14px; }
+.marker.sunrise { border-left-style: solid; border-color: var(--ink-3); opacity: 0.35; }
+.marker.first-light { border-left-style: solid; border-color: var(--accent); opacity: 0.8; }
