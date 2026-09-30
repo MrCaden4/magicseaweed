@@ -1,0 +1,1 @@
+{"properties": {"gridId": "SGX", "gridX": 33, "gridY": 46, "forecast": "https://api.weather.gov/gridpoints/SGX/33,46/forecast", "forecastHourly": "https://api.weather.gov/gridpoints/SGX/33,46/forecast/hourly", "forecastGridData": "https://api.weather.gov/gridpoints/SGX/33,46", "forecastZone": "https://api.weather.gov/zones/forecast/CAZ552", "timeZone": "America/Los_Angeles"}}

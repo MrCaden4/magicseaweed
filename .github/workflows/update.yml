@@ -1,0 +1,96 @@
+name: Update forecast
+
+on:
+  schedule:
+    # Pacific times: 4:37 AM, 6:41 AM, 1:07 PM, 7:23 PM during PDT (one hour earlier in PST).
+    - cron: '37 11 * * *'
+    - cron: '41 13 * * *'
+    - cron: '7 20 * * *'
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+  push:
+    branches: ['main', 'claude/**']
+    paths-ignore: ['site/data.json', 'data/**']
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: update-forecast-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    name: Fetch forecast
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch surf, water, sun and weather
+        run: python scripts/fetch.py --dump raw
+
+      - name: Write run summary
+        run: python scripts/fetch.py --summary >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show raw responses (development branches only)
+        if: github.ref != 'refs/heads/main'
+        run: |
+          for f in raw/*; do
+            echo "=== $f ($(wc -c < "$f") bytes)"
+            head -c 2500 "$f"
+            echo
+          done
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data.json data/last_fetch.json
+          if git diff --cached --quiet; then
+            echo "No data change."
+            exit 0
+          fi
+          git commit -m "data: forecast $(TZ=America/Los_Angeles date '+%Y-%m-%d %H:%M %Z')"
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then break; fi
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            sleep 3
+          done
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Publish site
+    needs: fetch
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check that GitHub Pages is enabled
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/pages" --silent; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=GitHub Pages is not enabled::Turn it on once under Settings → Pages → Source: GitHub Actions. Data still updated; the site publishes on the next run."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/configure-pages@v5
+        if: steps.pages.outputs.enabled == 'true'
+
+      - uses: actions/deploy-pages@v4
+        id: deployment
+        if: steps.pages.outputs.enabled == 'true'
