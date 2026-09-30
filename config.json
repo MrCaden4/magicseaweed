@@ -34,7 +34,7 @@
   "morning_hours": [5, 13],
   "uv": {"burn_threshold": 6},
   "suit": {
-    "runs_cold": true,
+    "runs_cold": false,
     "rules": [
       {"name": "Trunks", "detail": "boardshorts, maybe a rash guard", "min_water": 72, "min_air": 68},
       {"name": "Spring suit", "detail": "2 mm shorty", "min_water": 67, "min_air": 58},
