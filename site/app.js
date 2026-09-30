@@ -134,12 +134,21 @@
     $('#loc-name').textContent = data.location?.name || 'Huntington Beach Pier';
   }
 
+  function dayLabel(d) {
+    const now = laNow();
+    if (d.date === now.date) return 'Today';
+    const t = new Date(`${now.date}T12:00:00-07:00`);
+    t.setDate(t.getDate() + 1);
+    if (d.date === dateOf(t.toISOString())) return 'Tomorrow';
+    return d.weekday || d.label;
+  }
+
   function renderTabs(data) {
     const tabs = $('#day-tabs');
     clear(tabs);
     data.days.forEach((d, i) => {
       const b = el('button', {
-        class: 'tab', role: 'tab', 'aria-selected': String(i === state.dayIndex), text: d.label,
+        class: 'tab', role: 'tab', 'aria-selected': String(i === state.dayIndex), text: dayLabel(d),
         onclick: () => { state.dayIndex = i; renderAll(); },
       });
       tabs.append(b);
@@ -167,7 +176,8 @@
     setKpi('sun', sunVal, sunUnit, sunNote + (so.confidence ? ` · ${so.confidence} confidence` : ''));
 
     const win = day.window;
-    setKpi('window', win ? `${fmt.hm(win.start)}–${fmt.hm(win.end)}` : '—', win ? fmt.time(win.end).slice(-2) : '',
+    const sameHalf = win && fmt.time(win.start).slice(-2) === fmt.time(win.end).slice(-2);
+    setKpi('window', win ? `${sameHalf ? fmt.hm(win.start) : fmt.time(win.start)}–${fmt.hm(win.end)}` : '—', win ? fmt.time(win.end).slice(-2) : '',
       win ? `${win.why}${win.tide ? ` · tide ${win.tide.start_ft}→${win.tide.end_ft} ft ${win.tide.trend}` : ''}` : 'no clean window before noon');
   }
   function setKpi(key, value, unit, note, boldNote) {
@@ -348,11 +358,15 @@
     for (const a of data.alerts || []) {
       alerts.append(el('div', { class: 'alert' }, [
         el('b', { text: a.event || 'Alert' }),
-        el('span', { text: (a.description || a.headline || '').replace(/\s+/g, ' ').slice(0, 220) }),
+        el('span', { text: trim((a.description || a.headline || '').replace(/\s+/g, ' '), 240) }),
         el('span', { class: 'muted', text: a.ends ? `until ${fmt.dateShort(a.ends)}` : '' }),
       ]));
     }
     alerts.hidden = !(data.alerts || []).length;
+  }
+  function trim(text, n) {
+    if (!text || text.length <= n) return text || '';
+    return `${text.slice(0, n).replace(/\s+\S*$/, '')}…`;
   }
   function stat(label, value, sub) {
     return el('div', { class: 'stat' }, [el('div', { class: 'lbl', text: label }), el('div', { class: 'val', text: value }), sub ? el('div', { class: 'sub', text: sub }) : null]);
