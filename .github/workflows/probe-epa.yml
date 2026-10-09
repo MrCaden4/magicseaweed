@@ -7,40 +7,36 @@ jobs:
   probe:
     runs-on: ubuntu-24.04
     steps:
-      - name: Probe candidate URLs
+      - name: Daily endpoints, and hourly for other locations
         shell: bash
         run: |
-          set +e
+          set +e +o pipefail
           probe() {
-            local url="$1"
             local meta
-            meta=$(curl -sS -o body.out -L --max-time 40 -A 'hb-surf-site/1.0 (github.com/MrCaden4/magicseaweed)' -w '%{http_code} %{url_effective} %{content_type}' "$url" 2>curl.err)
+            meta=$(curl -sS -o body.out -L --max-time 40 -A 'hb-surf-site/1.0 (github.com/MrCaden4/magicseaweed)' -w '%{http_code} %{url_effective} %{content_type}' "$1" 2>curl.err)
             echo "=== ${meta:-curl-failed: $(cat curl.err)}"
-            echo "    requested: $url  body=$(wc -c < body.out 2>/dev/null || echo 0) bytes"
-            head -c 600 body.out 2>/dev/null | tr -d '\000'
-            echo; echo
+            echo "    requested: $1  body=$(wc -c < body.out 2>/dev/null || echo 0) bytes"
+            head -c 500 body.out 2>/dev/null | tr -d '\000'; echo; echo
           }
-          probe "https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/ZIP/92648/JSON"
-          probe "https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/ZIP/92648/XML"
+          probe "https://data.epa.gov/dmapservice/getEnvirofactsUVDAILY/ZIP/92648/JSON"
           probe "https://data.epa.gov/efservice/getEnvirofactsUVDAILY/ZIP/92648/JSON"
-          probe "https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/CITY/Huntington%20Beach/STATE/CA/JSON"
-          probe "https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/ZIP/20050/JSON"
-          probe "https://enviro.epa.gov/enviro/efservice/getEnvirofactsUVHOURLY/ZIP/92648/JSON"
-          probe "https://data.epa.gov/dmapservice/getEnvirofactsUVHOURLY/ZIP/92648/JSON"
-          probe "https://data.epa.gov/efservice/tri_facility/state_abbr/VA/rows/0:2/JSON"
-          probe "https://data.epa.gov/efservice/"
-          probe "https://enviro.epa.gov/envirofacts/uv/search"
-          probe "https://www.epa.gov/enviro/web-services"
-      - name: Hints from the docs and the UV search page
+          probe "https://data.epa.gov/dmapservice/getEnvirofactsUVDAILY/CITY/Huntington%20Beach/STATE/CA/JSON"
+          probe "https://data.epa.gov/dmapservice/getEnvirofactsUVHOURLY/ZIP/90210/JSON"
+          probe "https://data.epa.gov/dmapservice/getEnvirofactsUVHOURLY/ZIP/10001/JSON"
+          probe "https://data.epa.gov/dmapservice/getEnvirofactsUVDAILY/ZIP/10001/JSON"
+          true
+      - name: Endpoints used by EPA's own UV search app
         shell: bash
         run: |
-          set +e
-          echo "--- web-services doc: lines mentioning UV ---"
-          curl -sS -L --max-time 40 "https://www.epa.gov/enviro/web-services" > docs.html
-          grep -i -o -E '[^"<>]{0,120}(UVHOURLY|UVDAILY|UV Index)[^"<>]{0,160}' docs.html | sort -u | head -40
-          echo "--- web-services doc: URLs ---"
-          grep -i -o -E 'https?://[^"'"'"'<> ]*(efservice|dmapservice|uv)[^"'"'"'<> ]*' docs.html | sort -u | head -40
-          echo "--- UV search page: URLs / scripts ---"
+          set +e +o pipefail
           curl -sS -L --max-time 40 "https://enviro.epa.gov/envirofacts/uv/search" > search.html
-          grep -i -o -E '(src|href|action)="[^"]*"' search.html | sort -u | head -60
-          grep -i -o -E 'https?://[^"'"'"'<> ]*' search.html | grep -i -E 'uv|efservice|dmap|api' | sort -u | head -40
+          js=$(grep -o -E 'src="/assets/[^"]+\.js"' search.html | head -1 | sed -E 's/src="([^"]+)"/\1/')
+          echo "bundle: $js"
+          curl -sS -L --max-time 60 "https://enviro.epa.gov$js" > bundle.js
+          echo "bundle bytes: $(wc -c < bundle.js)"
+          grep -o -E '[A-Za-z0-9_./:-]*(UVHOURLY|UVDAILY|uv_hourly|uv_daily|dmapservice|efservice)[A-Za-z0-9_./:${}-]*' bundle.js | sort -u | head -40
+          echo "--- URL strings mentioning epa ---"
+          grep -o -E '"[^"]*//[^"]*"' bundle.js | grep -i 'epa' | sort -u | head -40
+          echo "--- path strings mentioning uv/api/service ---"
+          grep -o -E '"/[A-Za-z0-9_./-]*"' bundle.js | grep -i -E 'uv|api|service' | sort -u | head -40
+          true
