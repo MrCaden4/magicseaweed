@@ -373,19 +373,41 @@ def fetch_nws_grid(src, points):
     }
 
 
+SEVERITY_RANK = {"Extreme": 4, "Severe": 3, "Moderate": 2, "Minor": 1}
+
+
 def fetch_nws_alerts(src):
+    """Active NWS alerts for the point, one card per distinct text.
+
+    NWS often issues a warning, an advisory and a beach hazards statement with
+    the same wording; those collapse into the newest (then most severe) one,
+    which lists the other event names under "also".
+    """
     data = src.json("nws_alerts", f"{NWS}/alerts/active?point={LAT},{LON}")
-    out = []
+    groups = {}
     for feat in data.get("features", []):
         pr = feat.get("properties", {})
-        out.append({
+        desc = (pr.get("description") or "")
+        item = {
             "event": pr.get("event"),
             "headline": pr.get("headline"),
             "severity": pr.get("severity"),
+            "sent": pr.get("sent"),
             "onset": pr.get("onset"),
             "ends": pr.get("ends") or pr.get("expires"),
-            "description": (pr.get("description") or "")[:600],
-        })
+            "description": desc[:600],
+            "also": [],
+        }
+        key = " ".join(desc.split()).lower() or item["event"]
+        groups.setdefault(key, []).append(item)
+    out = []
+    for items in groups.values():
+        items.sort(key=lambda a: (a["sent"] or "", SEVERITY_RANK.get(a["severity"], 0)), reverse=True)
+        keep = items[0]
+        keep["also"] = [a["event"] for a in items[1:] if a["event"] and a["event"] != keep["event"]]
+        keep["ends"] = max((a["ends"] for a in items if a["ends"]), default=keep["ends"])
+        out.append(keep)
+    out.sort(key=lambda a: (a["sent"] or "", SEVERITY_RANK.get(a["severity"], 0)), reverse=True)
     return {"alerts": out}
 
 
