@@ -157,12 +157,19 @@ svg { display: block; }
 /* ---------------------------------------------------------------- hero */
 .hero { display: grid; gap: 18px; padding-block: 4px 34px; }
 .hero-date { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; color: var(--ink-2); font-size: 14px; }
-.tabs { display: inline-flex; gap: 4px; padding: 3px; border-radius: 999px; background: var(--bg-3); }
-.tab {
-  border: 0; background: transparent; padding: 5px 12px; border-radius: 999px;
-  font-size: 13px; font-weight: 600; color: var(--ink-3); cursor: pointer;
+.tabs {
+  display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px;
+  background: var(--bg-3); border: 1px solid color-mix(in oklab, var(--ink-3) 35%, transparent);
 }
-.tab[aria-selected="true"] { background: var(--bg-2); color: var(--ink); box-shadow: var(--shadow); }
+.tab {
+  border: 0; background: transparent; padding: 7px 16px; border-radius: 999px;
+  font-size: 14px; font-weight: 600; color: var(--ink-2); cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] {
+  background: var(--accent); color: var(--bg); font-weight: 700; box-shadow: var(--shadow);
+}
 .headline {
   font-size: clamp(26px, 4.6vw, 40px);
   font-weight: 600;
