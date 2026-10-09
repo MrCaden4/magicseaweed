@@ -24,11 +24,13 @@ concurrency:
 jobs:
   fetch:
     name: Fetch forecast
-    runs-on: ubuntu-latest
+    # Pinned on purpose: ubuntu-latest moves to Ubuntu 26.04 from October 19, 2026
+    # (actions/runner-images#14748). Both jobs use the same label.
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -63,7 +65,7 @@ jobs:
             sleep 3
           done
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -71,7 +73,7 @@ jobs:
     name: Publish site
     needs: fetch
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -88,9 +90,9 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
         if: steps.pages.outputs.enabled == 'true'
 
-      - uses: actions/deploy-pages@v4
+      - uses: actions/deploy-pages@v5
         id: deployment
         if: steps.pages.outputs.enabled == 'true'
