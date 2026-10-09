@@ -1,0 +1,46 @@
+# Temporary: probe EPA UV endpoints from a network that can reach epa.gov. Removed before merge.
+name: Probe EPA UV endpoints
+on:
+  push:
+    branches: ['claude/blissful-euler-u1up50']
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Probe candidate URLs
+        shell: bash
+        run: |
+          set +e
+          probe() {
+            local url="$1"
+            local meta
+            meta=$(curl -sS -o body.out -L --max-time 40 -A 'hb-surf-site/1.0 (github.com/MrCaden4/magicseaweed)' -w '%{http_code} %{url_effective} %{content_type}' "$url" 2>curl.err)
+            echo "=== ${meta:-curl-failed: $(cat curl.err)}"
+            echo "    requested: $url  body=$(wc -c < body.out 2>/dev/null || echo 0) bytes"
+            head -c 600 body.out 2>/dev/null | tr -d '\000'
+            echo; echo
+          }
+          probe "https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/ZIP/92648/JSON"
+          probe "https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/ZIP/92648/XML"
+          probe "https://data.epa.gov/efservice/getEnvirofactsUVDAILY/ZIP/92648/JSON"
+          probe "https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/CITY/Huntington%20Beach/STATE/CA/JSON"
+          probe "https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/ZIP/20050/JSON"
+          probe "https://enviro.epa.gov/enviro/efservice/getEnvirofactsUVHOURLY/ZIP/92648/JSON"
+          probe "https://data.epa.gov/dmapservice/getEnvirofactsUVHOURLY/ZIP/92648/JSON"
+          probe "https://data.epa.gov/efservice/tri_facility/state_abbr/VA/rows/0:2/JSON"
+          probe "https://data.epa.gov/efservice/"
+          probe "https://enviro.epa.gov/envirofacts/uv/search"
+          probe "https://www.epa.gov/enviro/web-services"
+      - name: Hints from the docs and the UV search page
+        shell: bash
+        run: |
+          set +e
+          echo "--- web-services doc: lines mentioning UV ---"
+          curl -sS -L --max-time 40 "https://www.epa.gov/enviro/web-services" > docs.html
+          grep -i -o -E '[^"<>]{0,120}(UVHOURLY|UVDAILY|UV Index)[^"<>]{0,160}' docs.html | sort -u | head -40
+          echo "--- web-services doc: URLs ---"
+          grep -i -o -E 'https?://[^"'"'"'<> ]*(efservice|dmapservice|uv)[^"'"'"'<> ]*' docs.html | sort -u | head -40
+          echo "--- UV search page: URLs / scripts ---"
+          curl -sS -L --max-time 40 "https://enviro.epa.gov/envirofacts/uv/search" > search.html
+          grep -i -o -E '(src|href|action)="[^"]*"' search.html | sort -u | head -60
+          grep -i -o -E 'https?://[^"'"'"'<> ]*' search.html | grep -i -E 'uv|efservice|dmap|api' | sort -u | head -40
