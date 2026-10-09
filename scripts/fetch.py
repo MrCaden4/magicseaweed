@@ -264,8 +264,8 @@ class Sources:
                 time.sleep(2 * (attempt + 1))
         raise last
 
-    def json(self, key, url, headers=None):
-        return json.loads(self.get(key, url, headers))
+    def json(self, key, url, headers=None, **kwargs):
+        return json.loads(self.get(key, url, headers, **kwargs))
 
 
 # ---------------------------------------------------------------- NWS
@@ -373,19 +373,41 @@ def fetch_nws_grid(src, points):
     }
 
 
+SEVERITY_RANK = {"Extreme": 4, "Severe": 3, "Moderate": 2, "Minor": 1}
+
+
 def fetch_nws_alerts(src):
+    """Active NWS alerts for the point, one card per distinct text.
+
+    NWS often issues a warning, an advisory and a beach hazards statement with
+    the same wording; those collapse into the newest (then most severe) one,
+    which lists the other event names under "also".
+    """
     data = src.json("nws_alerts", f"{NWS}/alerts/active?point={LAT},{LON}")
-    out = []
+    groups = {}
     for feat in data.get("features", []):
         pr = feat.get("properties", {})
-        out.append({
+        desc = (pr.get("description") or "")
+        item = {
             "event": pr.get("event"),
             "headline": pr.get("headline"),
             "severity": pr.get("severity"),
+            "sent": pr.get("sent"),
             "onset": pr.get("onset"),
             "ends": pr.get("ends") or pr.get("expires"),
-            "description": (pr.get("description") or "")[:600],
-        })
+            "description": desc[:600],
+            "also": [],
+        }
+        key = " ".join(desc.split()).lower() or item["event"]
+        groups.setdefault(key, []).append(item)
+    out = []
+    for items in groups.values():
+        items.sort(key=lambda a: (a["sent"] or "", SEVERITY_RANK.get(a["severity"], 0)), reverse=True)
+        keep = items[0]
+        keep["also"] = [a["event"] for a in items[1:] if a["event"] and a["event"] != keep["event"]]
+        keep["ends"] = max((a["ends"] for a in items if a["ends"]), default=keep["ends"])
+        out.append(keep)
+    out.sort(key=lambda a: (a["sent"] or "", SEVERITY_RANK.get(a["severity"], 0)), reverse=True)
     return {"alerts": out}
 
 
@@ -724,21 +746,51 @@ def fetch_tides(src, today):
 
 # ---------------------------------------------------------------- EPA UV
 
+EPA_UV = "https://data.epa.gov/dmapservice"
+
+
 def fetch_epa_uv(src, today):
-    url = f"https://data.epa.gov/efservice/getEnvirofactsUVHOURLY/ZIP/{LOC['zip']}/JSON"
-    data = src.json("epa_uv", url)
-    days = {}
-    for item in data:
-        raw = item.get("DATE_TIME", "")
-        try:
-            t = datetime.strptime(raw, "%b/%d/%Y %I %p").replace(tzinfo=TZ)
-        except ValueError:
-            continue
-        if t.date() >= today:
-            days.setdefault(t.date().isoformat(), []).append({"time": iso(t), "uv": float(item.get("UV_VALUE", 0))})
-    if not days:
-        raise RuntimeError("EPA UV has no rows for today or later")
-    return {"days": days}
+    """EPA UV index for the ZIP code: hourly values when EPA serves them, else the daily index.
+
+    Since October 2026 the hourly endpoint answers 404 "The UV results could not
+    be found for that location" for every location, while the daily endpoint
+    (one index per day plus the alert flag) keeps working.
+    """
+    out = {"days": {}, "daily": {}}
+    hourly_err = daily_err = None
+    try:
+        data = src.json("epa_uv", f"{EPA_UV}/getEnvirofactsUVHOURLY/ZIP/{LOC['zip']}/JSON", retries=1)
+        for item in data:
+            try:
+                t = datetime.strptime(item.get("DATE_TIME", ""), "%b/%d/%Y %I %p").replace(tzinfo=TZ)
+            except ValueError:
+                continue
+            if t.date() >= today:
+                out["days"].setdefault(t.date().isoformat(), []).append(
+                    {"time": iso(t), "uv": float(item.get("UV_VALUE", 0))})
+    except Exception as exc:  # noqa: BLE001
+        hourly_err = str(exc)
+    if not out["days"]:
+        hourly_err = hourly_err or "no rows for today or later"
+    try:
+        data = src.json("epa_uv_daily", f"{EPA_UV}/getEnvirofactsUVDAILY/ZIP/{LOC['zip']}/JSON")
+        for item in data:
+            try:
+                d = datetime.strptime(item.get("DATE", ""), "%b/%d/%Y").date()
+                value = float(item["UV_INDEX"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if d >= today:
+                out["daily"][d.isoformat()] = {"uv": value, "alert": str(item.get("UV_ALERT")) == "1"}
+    except Exception as exc:  # noqa: BLE001
+        daily_err = str(exc)
+    if not out["daily"]:
+        daily_err = daily_err or "no rows for today or later"
+    if not out["days"] and not out["daily"]:
+        raise RuntimeError(f"hourly: {hourly_err}; daily: {daily_err}")
+    if not out["days"]:
+        log("      EPA hourly UV unavailable, using the daily index")
+    return out
 
 
 # ---------------------------------------------------------------- analysis
@@ -1138,7 +1190,7 @@ def day_weather(d, sec, rows):
     }
 
 
-def day_uv(rows, epa_rows):
+def day_uv(rows, epa_rows, epa_day=None):
     pts = [(r["hour"], r["uv"]) for r in rows if r.get("uv") is not None]
     src = "model"
     if epa_rows:
@@ -1147,6 +1199,13 @@ def day_uv(rows, epa_rows):
             pts, src = epts, "epa"
     if not pts:
         return None
+    if src == "model" and epa_day and epa_day.get("uv") is not None:
+        # EPA's daily index is the official number for the day; the model keeps the timing.
+        model_peak = max(v for _, v in pts)
+        if model_peak > 0:
+            scale = epa_day["uv"] / model_peak
+            pts = [(h, v * scale) for h, v in pts]
+            src = "epa-daily"
     peak_h, peak = max(pts, key=lambda p: p[1])
     thr = CONFIG["uv"]["burn_threshold"]
     burn = [h for h, v in pts if v >= thr]
@@ -1158,6 +1217,7 @@ def day_uv(rows, epa_rows):
         "burn_label": (f"{min(burn) % 12 or 12}–{(max(burn) + 1) % 12 or 12} {'PM' if (max(burn) + 1) >= 12 else 'AM'}" if burn else None),
         "clear_sky_peak": round(max(clear), 1) if clear else None,
         "threshold": thr, "source": src,
+        "alert": bool(epa_day.get("alert")) if epa_day else None,
     }
 
 
@@ -1358,7 +1418,9 @@ def build(src, prev):
         window = best_window(d, rows, sun, tide_curve)
         surf = day_surf(d, rows, sections, today)
         weather = day_weather(d, sections, rows)
-        uv = day_uv(rows, ((sections.get("epa_uv") or {}).get("days") or {}).get(d.isoformat()))
+        epa_sec = sections.get("epa_uv") or {}
+        uv = day_uv(rows, (epa_sec.get("days") or {}).get(d.isoformat()),
+                    (epa_sec.get("daily") or {}).get(d.isoformat()))
         sunrise = parse_iso(sun["sunrise"])
         dawn_temps = [rows[h].get("temp_f") for h in range(max(sunrise.hour - 1, 0), min(sunrise.hour + 2, 24))
                       if rows[h].get("temp_f") is not None]

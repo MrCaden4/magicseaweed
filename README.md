@@ -12,7 +12,7 @@ It updates itself four times a day.
    - NDBC buoys 46253 (San Pedro South) and 46222 (San Pedro): swell and water temp
    - NOAA tide predictions for Newport Bay Entrance (station 9410580)
    - Open-Meteo wave and weather models (7-day swell, cloud cover, UV) as a second opinion
-   - EPA hourly UV for 92648 when it is current
+   - EPA UV index for 92648: hourly values when EPA serves them, else the daily index
    It computes sunrise, first light, the sun-out time, the paddle-out window,
    the wetsuit recommendation and a one-line read, then writes `site/data.json`.
    When a source fails, the previous value is kept and flagged stale.

@@ -372,7 +372,7 @@
       alerts.append(el('div', { class: 'alert' }, [
         el('b', { text: a.event || 'Alert' }),
         el('span', { text: trim((a.description || a.headline || '').replace(/\s+/g, ' '), 240) }),
-        el('span', { class: 'muted', text: a.ends ? `until ${fmt.dateShort(a.ends)}` : '' }),
+        el('span', { class: 'muted', text: [a.ends ? `until ${fmt.dateShort(a.ends)}` : '', a.also?.length ? `also: ${a.also.join(', ')}` : ''].filter(Boolean).join(' · ') }),
       ]));
     }
     alerts.hidden = !(data.alerts || []).length;
