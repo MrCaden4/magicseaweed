@@ -724,7 +724,7 @@ def fetch_tides(src, today):
 
 # ---------------------------------------------------------------- EPA UV
 
-EPA_UV = "https://data.epa.gov/efservice"
+EPA_UV = "https://data.epa.gov/dmapservice"
 
 
 def fetch_epa_uv(src, today):
