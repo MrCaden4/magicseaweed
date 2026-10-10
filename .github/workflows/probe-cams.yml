@@ -1,0 +1,101 @@
+# Temporary: find public Huntington Beach surf cam embed sources from a network that can reach them. Removed before merge.
+name: Probe surf cams
+on:
+  push:
+    branches: ['claude/blissful-euler-u1up50']
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fetch cam pages and extract embed sources
+        shell: bash
+        run: |
+          set +e +o pipefail
+          cat > probe.py <<'PY'
+          import re, sys, json, urllib.request, urllib.error
+          UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
+          PAGES = [
+            "https://www.surfcityusa.com/things-to-do/surfing/live-surf-cam/",
+            "https://www.surfcityusa.com/things-to-do/surfing/surf-report/",
+            "https://hbcams.com/",
+            "https://www.webcamtaxi.com/en/usa/california/huntington-beach-pier.html",
+            "https://www.webcamtaxi.com/en/usa/california/huntington-beach-lifeguard-headquarters.html",
+            "https://www.livebeaches.com/webcams/huntington-beach-lifeguard-cam/",
+            "https://www.livebeaches.com/city/huntington-beach-ca/",
+            "https://www.thelocalhb.com/surfcams",
+            "https://camstreamer.com/live/stream/796-lifeguard-hq-huntington-beach",
+            "https://camstreamer.com/live/stream/188351090-view-from-huntington-beach-pier",
+            "https://www.beachcamsusa.com/webcams/huntington-beach-lifeguard-hq-cam/",
+            "https://www.geowebcams.com/en/webcam/huntington-city-beach-and-lifeguard-hq",
+            "https://www.surf-forecast.com/breaks/Huntington-Beach/webcams/latest",
+            "https://www.surf-forecast.com/breaks/Huntington-Pier/webcams/latest",
+            "https://www.surf-forecast.com/breaks/Bolsa-Chica/webcams/latest",
+            "https://thesurfersview.com/live-cams/california/huntington-beach-pier-cam-south-surf-report/",
+            "https://www.mybeachcams.com/webcam/united-states/california/los-angeles/live-huntington-beach-pier-cam",
+            "https://www.huntingtonbeachca.gov/",
+          ]
+          PATTERNS = {
+            "yt_embed": r"youtube(?:-nocookie)?\.com/embed/[A-Za-z0-9_?=&;%-]+",
+            "yt_watch": r"(?:youtube\.com/watch\?v=|youtu\.be/)[A-Za-z0-9_-]{11}",
+            "yt_channel": r"youtube\.com/(?:channel/UC[A-Za-z0-9_-]{22}|@[A-Za-z0-9_.-]+)(?:/live)?",
+            "iframe": r"<iframe[^>]+src=[\"']([^\"']+)",
+            "m3u8": r"https?://[^\s\"'<>]+\.m3u8[^\s\"'<>]*",
+            "hdontap": r"https?://[^\s\"'<>]*hdontap\.com[^\s\"'<>]*",
+            "camstreamer": r"https?://[^\s\"'<>]*camstreamer\.com[^\s\"'<>]*",
+            "hbcams": r"https?://[^\s\"'<>]*hbcams\.com[^\s\"'<>]*",
+            "snapshot_jpg": r"https?://[^\s\"'<>]+\.(?:jpg|jpeg)(?:\?[^\s\"'<>]*)?",
+            "video_src": r"<(?:video|source)[^>]+src=[\"']([^\"']+)",
+          }
+          def fetch(url):
+            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html,*/*"})
+            with urllib.request.urlopen(req, timeout=40) as r:
+              return r.geturl(), r.status, r.read().decode("utf-8", "replace")
+          for url in PAGES:
+            print("=" * 100); print("PAGE", url)
+            try:
+              final, status, html = fetch(url)
+            except Exception as e:
+              print("  ERROR", e); continue
+            print("  status", status, "final", final, "bytes", len(html))
+            t = re.search(r"<title>(.*?)</title>", html, re.S | re.I)
+            if t: print("  title:", " ".join(t.group(1).split())[:120])
+            for name, pat in PATTERNS.items():
+              hits = sorted(set(m if isinstance(m, str) else m[0] for m in re.findall(pat, html, re.I)))
+              hits = [h for h in hits if not re.search(r"(logo|icon|sprite|avatar|banner|flag|thumb|\.svg)", h, re.I)] if name == "snapshot_jpg" else hits
+              if hits:
+                print(f"  {name}:")
+                for h in hits[:12]: print("     ", h[:220])
+          PY
+          python3 probe.py
+      - name: YouTube live search for Huntington Beach cams
+        shell: bash
+        run: |
+          set +e +o pipefail
+          cat > yt.py <<'PY'
+          import re, json, urllib.request, urllib.parse
+          UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
+          def walk(o, out):
+            if isinstance(o, dict):
+              if "videoRenderer" in o:
+                v = o["videoRenderer"]
+                title = "".join(r.get("text","") for r in v.get("title",{}).get("runs",[]))
+                owner = "".join(r.get("text","") for r in v.get("ownerText",{}).get("runs",[]))
+                nav = v.get("ownerText",{}).get("runs",[{}])[0].get("navigationEndpoint",{}).get("browseEndpoint",{})
+                badges = [b.get("metadataBadgeRenderer",{}).get("label","") for b in v.get("badges",[])]
+                live = any("LIVE" in b.upper() for b in badges) or "isLive" in json.dumps(v.get("thumbnailOverlays",[]))
+                out.append((live, v.get("videoId"), title, owner, nav.get("browseId"), nav.get("canonicalBaseUrl")))
+              for x in o.values(): walk(x, out)
+            elif isinstance(o, list):
+              for x in o: walk(x, out)
+          for q in ["huntington beach pier live cam", "huntington beach lifeguard live cam", "huntington beach surf cam live", "bolsa chica live cam", "HBcams live"]:
+            url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(q) + "&sp=EgJAAQ%253D%253D"  # filter: live
+            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
+            html = urllib.request.urlopen(req, timeout=40).read().decode("utf-8", "replace")
+            m = re.search(r"var ytInitialData = (\{.*?\});</script>", html, re.S)
+            print("=" * 100); print("QUERY", q, "| data found:", bool(m))
+            if not m: continue
+            out = []; walk(json.loads(m.group(1)), out)
+            for live, vid, title, owner, chan, canon in out[:15]:
+              print(f"  {'LIVE' if live else '    '} {vid} | {title[:70]} | {owner[:35]} | {chan} {canon}")
+          PY
+          python3 yt.py
