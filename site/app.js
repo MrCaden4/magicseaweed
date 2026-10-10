@@ -596,6 +596,67 @@
     }
   }
 
+  // ------------------------------------------------------------ render: cams
+  const snapshots = [];
+  function refreshSnapshots() {
+    if (document.visibilityState !== 'visible') return;
+    const tick = Math.floor(Date.now() / 120000);
+    for (const s of snapshots) if (s.img.isConnected) s.img.src = `${s.base}?t=${tick}`;
+  }
+  function renderCams(data) {
+    const card = $('#cams-card');
+    if (!card) return;
+    const cams = data.cams || [];
+    card.hidden = !cams.length;
+    const host = clear($('#cams'));
+    snapshots.length = 0;
+    const tick = Math.floor(Date.now() / 120000);
+    for (const c of cams) {
+      const frame = el('div', { class: 'cam-frame' });
+      let status = null;
+      let open = null;
+      if (c.youtube) {
+        const poster = el('img', { class: 'cam-poster', alt: '', loading: 'lazy', src: `https://i.ytimg.com/vi/${c.youtube}/hqdefault.jpg` });
+        poster.addEventListener('error', () => poster.remove(), { once: true });
+        const play = el('button', { class: 'cam-play', type: 'button', 'aria-label': `Play the ${c.name} cam` }, [
+          svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, [svgEl('path', { d: 'M8 5v14l11-7z' })]),
+        ]);
+        play.addEventListener('click', () => {
+          clear(frame).append(el('iframe', {
+            src: `https://www.youtube-nocookie.com/embed/${c.youtube}?autoplay=1&mute=1&playsinline=1&rel=0`,
+            title: `${c.name} live cam`, allow: 'autoplay; fullscreen; picture-in-picture', allowfullscreen: '',
+            referrerpolicy: 'strict-origin-when-cross-origin',
+          }));
+        });
+        frame.append(poster, play);
+        status = c.live ? el('span', { class: 'pill good', text: 'Live' })
+          : c.live === false ? el('span', { class: 'pill', text: 'Offline' }) : null;
+        open = c.url ? el('a', { class: 'cam-open', href: c.url, target: '_blank', rel: 'noopener', text: 'YouTube ↗' }) : null;
+      } else if (c.snapshot_url) {
+        const img = el('img', { class: 'cam-poster', alt: `${c.name} snapshot`, loading: 'lazy', src: `${c.snapshot_url}?t=${tick}` });
+        img.addEventListener('error', () => img.remove(), { once: true });
+        snapshots.push({ img, base: c.snapshot_url });
+        frame.append(
+          el('a', { class: 'cam-link', href: c.url, target: '_blank', rel: 'noopener', 'aria-label': `Watch the ${c.name} cam live` }, [img]),
+          el('span', { class: 'cam-badge', text: 'Still · tap for live' }),
+        );
+        open = c.url ? el('a', { class: 'cam-open', href: c.url, target: '_blank', rel: 'noopener', text: 'Live ↗' }) : null;
+      } else continue;
+      host.append(el('div', { class: `cam${c.live === false ? ' off' : ''}` }, [
+        frame,
+        el('div', { class: 'cam-cap' }, [
+          el('div', { class: 'cam-text' }, [el('div', { class: 'cam-name' }, [c.name, status]), el('div', { class: 'cam-sub', text: c.sub || '' })]),
+          open,
+        ]),
+      ]));
+    }
+    const checked = data.sources?.yt_cams?.fetched_at;
+    $('#cams-meta').textContent = `free public cams · tap a player to watch${checked ? ` · live check ${fmt.time(checked)}` : ''}`;
+    const note = $('#cams-links');
+    note.textContent = 'The city cams play right here. HBcams stills refresh every couple of minutes and open the live stream on hbcams.com. No free cam at 17th St or Bolsa Chica yet.';
+  }
+  if (!window.__camTimer) window.__camTimer = setInterval(refreshSnapshots, 120000);
+
   // ------------------------------------------------------------ render: sources
   function renderSources(data) {
     const ul = $('#sources');
@@ -625,6 +686,7 @@
     renderTide(data, day);
     renderWeather(data, day);
     renderWeek(data);
+    renderCams(data);
     renderSources(data);
   }
 

@@ -13,6 +13,8 @@ It updates itself four times a day.
    - NOAA tide predictions for Newport Bay Entrance (station 9410580)
    - Open-Meteo wave and weather models (7-day swell, cloud cover, UV) as a second opinion
    - EPA UV index for 92648: hourly values when EPA serves them, else the daily index
+   - the City of Huntington Beach's YouTube channel, to see which of its pier and
+     lifeguard HQ live cams are streaming (the cam list lives in `config.json`)
    It computes sunrise, first light, the sun-out time, the paddle-out window,
    the wetsuit recommendation and a one-line read, then writes `site/data.json`.
    When a source fails, the previous value is kept and flagged stale.

@@ -204,6 +204,31 @@ svg { display: block; }
 .kpi-note { color: var(--ink-2); font-size: 13px; margin-top: 4px; text-wrap: pretty; }
 .kpi-note b { color: var(--ink); font-weight: 600; }
 
+/* ---------------------------------------------------------------- cams */
+.cams { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.cam { border-radius: 12px; overflow: hidden; background: var(--bg-3); border: 1px solid var(--line); }
+.cam.off .cam-frame { opacity: 0.55; }
+.cam-frame { position: relative; aspect-ratio: 16 / 9; background: #06101a; }
+.cam-frame img, .cam-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; object-fit: cover; display: block; }
+.cam-link { position: absolute; inset: 0; display: block; }
+.cam-link:hover img { filter: brightness(1.08); }
+.cam-badge { position: absolute; left: 10px; bottom: 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; padding: 2px 8px; border-radius: 999px; background: rgba(6, 16, 26, 0.72); color: #fff; pointer-events: none; }
+.cam-play {
+  position: absolute; inset: 0; width: 100%; height: 100%; border: 0; cursor: pointer; background: transparent;
+  display: grid; place-items: center; transition: background 0.15s ease;
+}
+.cam-play svg { width: 64px; height: 64px; padding: 14px; box-sizing: border-box; border-radius: 999px; background: rgba(6, 16, 26, 0.72); fill: #fff; transition: transform 0.15s ease, background 0.15s ease; }
+.cam-play:hover svg, .cam-play:focus-visible svg { transform: scale(1.06); background: var(--accent); fill: var(--bg); }
+.cam-play:hover { background: rgba(0, 0, 0, 0.12); }
+.cam-cap { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; }
+.cam-text { min-width: 0; }
+.cam-name { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+.cam-name .pill { font-size: 11px; padding: 1px 8px; }
+.cam-sub { color: var(--ink-3); font-size: 12px; margin-top: 2px; }
+.cam-open { color: var(--ink-2); font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.cam-open:hover { color: var(--ink); text-decoration: underline; }
+.cam-links { font-size: 13px; color: var(--ink-3); }
+
 /* ---------------------------------------------------------------- panels */
 .panels { display: grid; gap: 16px; }
 .grid-2 { display: grid; gap: 16px; }
