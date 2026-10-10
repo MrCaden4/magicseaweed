@@ -56,6 +56,7 @@ SOURCE_LABELS = {
     "om_marine": "Open-Meteo wave model",
     "tides": "NOAA tide predictions",
     "epa_uv": "EPA UV index",
+    "yt_cams": "Live cams (YouTube)",
 }
 
 
@@ -793,6 +794,98 @@ def fetch_epa_uv(src, today):
     return out
 
 
+# ---------------------------------------------------------------- live cams
+
+YT_DATA_RE = re.compile(r"var ytInitialData = (\{.*?\});</script>", re.S)
+YT_LIVE_RE = re.compile(r'"(?:style|badgeStyle|text)":\s*"(?:LIVE|THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE)"')
+YT_RENDERERS = ("videoRenderer", "gridVideoRenderer", "lockupViewModel")
+
+
+def yt_live_videos(html):
+    """Live videos listed on a YouTube channel's /streams page: [{id, title}]."""
+    m = YT_DATA_RE.search(html)
+    if not m:
+        raise RuntimeError("no ytInitialData in the channel page")
+    found = []
+
+    def title_of(v):
+        t = v.get("title") or {}
+        if isinstance(t, dict):
+            if t.get("runs"):
+                return "".join(r.get("text", "") for r in t["runs"])
+            if t.get("simpleText"):
+                return t["simpleText"]
+        meta = ((v.get("metadata") or {}).get("lockupMetadataViewModel") or {}).get("title") or {}
+        return meta.get("content") or ""
+
+    def walk(o):
+        if isinstance(o, dict):
+            for key in YT_RENDERERS:
+                v = o.get(key)
+                if isinstance(v, dict):
+                    vid = v.get("videoId") or v.get("contentId")
+                    if vid and YT_LIVE_RE.search(json.dumps(v)):
+                        found.append({"id": vid, "title": title_of(v)})
+            for x in o.values():
+                walk(x)
+        elif isinstance(o, list):
+            for x in o:
+                walk(x)
+
+    walk(json.loads(m.group(1)))
+    seen, out = set(), []
+    for v in found:
+        if v["id"] not in seen:
+            seen.add(v["id"])
+            out.append(v)
+    return out
+
+
+def fetch_yt_cams(src):
+    """Which YouTube cams are live, with their current video ids.
+
+    The channel's /streams page lists what is live; the city gets a new video id whenever it
+    restarts a stream, so the id is taken from there (matched by title) rather than config.
+    """
+    cfg = CONFIG.get("cams") or {}
+    channel = cfg.get("youtube_channel")
+    if not channel:
+        raise RuntimeError("no cams.youtube_channel in config.json")
+    html = src.get("yt_cams", f"https://www.youtube.com/channel/{channel}/streams",
+                   headers={"Accept-Language": "en-US,en;q=0.9"}, retries=2)
+    live = yt_live_videos(html)
+    out = []
+    for cam in cfg.get("list", []):
+        if not (cam.get("youtube") or cam.get("match")):
+            continue
+        needle = (cam.get("match") or "").lower()
+        hit = next((v for v in live if needle and needle in v["title"].lower()), None) \
+            or next((v for v in live if v["id"] == cam.get("youtube")), None)
+        out.append({"id": cam["id"], "youtube": (hit or {}).get("id") or cam.get("youtube"),
+                    "live": hit is not None, "title": (hit or {}).get("title")})
+    return {"checked_at": iso(now_local()), "live": live, "cams": out}
+
+
+def build_cams(yt):
+    """The page's cam list: config entries, YouTube ones updated with the live check."""
+    cfg = CONFIG.get("cams") or {}
+    checked = {c["id"]: c for c in ((yt or {}).get("cams") or [])}
+    out = []
+    for cam in cfg.get("list", []):
+        item = {"id": cam["id"], "name": cam["name"], "sub": cam.get("sub"), "url": cam.get("url"),
+                "youtube": None, "snapshot_url": None, "live": None, "title": None}
+        if cam.get("youtube") or cam.get("match"):
+            st = checked.get(cam["id"]) or {}
+            item["youtube"] = st.get("youtube") or cam.get("youtube")
+            item["live"], item["title"] = st.get("live"), st.get("title")
+            if item["youtube"]:
+                item["url"] = item["url"] or f"https://www.youtube.com/watch?v={item['youtube']}"
+        elif cam.get("snapshot") and cfg.get("snapshot_url"):
+            item["snapshot_url"] = cfg["snapshot_url"].format(slug=cam["snapshot"])
+        out.append(item)
+    return out
+
+
 # ---------------------------------------------------------------- analysis
 
 def by_time(rows):
@@ -1400,6 +1493,8 @@ def build(src, prev):
     run("om_marine", fetch_om_marine, src)
     run("tides", fetch_tides, src, today)
     run("epa_uv", fetch_epa_uv, src, today)
+    if (CONFIG.get("cams") or {}).get("list"):
+        run("yt_cams", fetch_yt_cams, src)
     for buoy in CONFIG["stations"]["buoys"]:
         name = f"buoy_{buoy['id']}"
         SOURCE_LABELS[name] = f"NDBC buoy {buoy['id']} ({buoy['name']})"
@@ -1483,6 +1578,7 @@ def build(src, prev):
                   "hilo": (tides or {}).get("hilo", []), "curve": tide_curve},
         "week": build_week(sections, today),
         "alerts": (sections.get("nws_alerts") or {}).get("alerts", []),
+        "cams": build_cams(sections.get("yt_cams")),
         "afd": sections.get("nws_afd"),
         "srf": {k: v for k, v in (sections.get("nws_srf") or {}).items() if k in ("found", "issued", "office", "zone_header")},
         "sources": sources,
