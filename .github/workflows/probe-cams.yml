@@ -7,95 +7,106 @@ jobs:
   probe:
     runs-on: ubuntu-24.04
     steps:
-      - name: Fetch cam pages and extract embed sources
+      - name: City of HB channel streams, lifeguard HQ video, oEmbed
         shell: bash
         run: |
           set +e +o pipefail
-          cat > probe.py <<'PY'
-          import re, sys, json, urllib.request, urllib.error
+          cat > yt2.py <<'PY'
+          import re, json, urllib.request
           UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
-          PAGES = [
-            "https://www.surfcityusa.com/things-to-do/surfing/live-surf-cam/",
-            "https://www.surfcityusa.com/things-to-do/surfing/surf-report/",
-            "https://hbcams.com/",
-            "https://www.webcamtaxi.com/en/usa/california/huntington-beach-pier.html",
-            "https://www.webcamtaxi.com/en/usa/california/huntington-beach-lifeguard-headquarters.html",
-            "https://www.livebeaches.com/webcams/huntington-beach-lifeguard-cam/",
-            "https://www.livebeaches.com/city/huntington-beach-ca/",
-            "https://www.thelocalhb.com/surfcams",
-            "https://camstreamer.com/live/stream/796-lifeguard-hq-huntington-beach",
-            "https://camstreamer.com/live/stream/188351090-view-from-huntington-beach-pier",
-            "https://www.beachcamsusa.com/webcams/huntington-beach-lifeguard-hq-cam/",
-            "https://www.geowebcams.com/en/webcam/huntington-city-beach-and-lifeguard-hq",
-            "https://www.surf-forecast.com/breaks/Huntington-Beach/webcams/latest",
-            "https://www.surf-forecast.com/breaks/Huntington-Pier/webcams/latest",
-            "https://www.surf-forecast.com/breaks/Bolsa-Chica/webcams/latest",
-            "https://thesurfersview.com/live-cams/california/huntington-beach-pier-cam-south-surf-report/",
-            "https://www.mybeachcams.com/webcam/united-states/california/los-angeles/live-huntington-beach-pier-cam",
-            "https://www.huntingtonbeachca.gov/",
-          ]
-          PATTERNS = {
-            "yt_embed": r"youtube(?:-nocookie)?\.com/embed/[A-Za-z0-9_?=&;%-]+",
-            "yt_watch": r"(?:youtube\.com/watch\?v=|youtu\.be/)[A-Za-z0-9_-]{11}",
-            "yt_channel": r"youtube\.com/(?:channel/UC[A-Za-z0-9_-]{22}|@[A-Za-z0-9_.-]+)(?:/live)?",
-            "iframe": r"<iframe[^>]+src=[\"']([^\"']+)",
-            "m3u8": r"https?://[^\s\"'<>]+\.m3u8[^\s\"'<>]*",
-            "hdontap": r"https?://[^\s\"'<>]*hdontap\.com[^\s\"'<>]*",
-            "camstreamer": r"https?://[^\s\"'<>]*camstreamer\.com[^\s\"'<>]*",
-            "hbcams": r"https?://[^\s\"'<>]*hbcams\.com[^\s\"'<>]*",
-            "snapshot_jpg": r"https?://[^\s\"'<>]+\.(?:jpg|jpeg)(?:\?[^\s\"'<>]*)?",
-            "video_src": r"<(?:video|source)[^>]+src=[\"']([^\"']+)",
-          }
-          def fetch(url):
-            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html,*/*"})
-            with urllib.request.urlopen(req, timeout=40) as r:
-              return r.geturl(), r.status, r.read().decode("utf-8", "replace")
-          for url in PAGES:
-            print("=" * 100); print("PAGE", url)
-            try:
-              final, status, html = fetch(url)
-            except Exception as e:
-              print("  ERROR", e); continue
-            print("  status", status, "final", final, "bytes", len(html))
-            t = re.search(r"<title>(.*?)</title>", html, re.S | re.I)
-            if t: print("  title:", " ".join(t.group(1).split())[:120])
-            for name, pat in PATTERNS.items():
-              hits = sorted(set(m if isinstance(m, str) else m[0] for m in re.findall(pat, html, re.I)))
-              hits = [h for h in hits if not re.search(r"(logo|icon|sprite|avatar|banner|flag|thumb|\.svg)", h, re.I)] if name == "snapshot_jpg" else hits
-              if hits:
-                print(f"  {name}:")
-                for h in hits[:12]: print("     ", h[:220])
-          PY
-          python3 probe.py
-      - name: YouTube live search for Huntington Beach cams
-        shell: bash
-        run: |
-          set +e +o pipefail
-          cat > yt.py <<'PY'
-          import re, json, urllib.request, urllib.parse
-          UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
+          def get(url):
+            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
+            return urllib.request.urlopen(req, timeout=40).read().decode("utf-8", "replace")
           def walk(o, out):
             if isinstance(o, dict):
               if "videoRenderer" in o:
                 v = o["videoRenderer"]
                 title = "".join(r.get("text","") for r in v.get("title",{}).get("runs",[]))
-                owner = "".join(r.get("text","") for r in v.get("ownerText",{}).get("runs",[]))
-                nav = v.get("ownerText",{}).get("runs",[{}])[0].get("navigationEndpoint",{}).get("browseEndpoint",{})
                 badges = [b.get("metadataBadgeRenderer",{}).get("label","") for b in v.get("badges",[])]
-                live = any("LIVE" in b.upper() for b in badges) or "isLive" in json.dumps(v.get("thumbnailOverlays",[]))
-                out.append((live, v.get("videoId"), title, owner, nav.get("browseId"), nav.get("canonicalBaseUrl")))
+                overlays = json.dumps(v.get("thumbnailOverlays",[]))
+                live = any("LIVE" in b.upper() for b in badges) or '"style":"LIVE"' in overlays
+                views = v.get("viewCountText",{}).get("runs",[{}])
+                views = "".join(r.get("text","") for r in views) if isinstance(views, list) else v.get("viewCountText",{}).get("simpleText","")
+                out.append((live, v.get("videoId"), title, views, badges))
               for x in o.values(): walk(x, out)
             elif isinstance(o, list):
               for x in o: walk(x, out)
-          for q in ["huntington beach pier live cam", "huntington beach lifeguard live cam", "huntington beach surf cam live", "bolsa chica live cam", "HBcams live"]:
-            url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(q) + "&sp=EgJAAQ%253D%253D"  # filter: live
-            req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
-            html = urllib.request.urlopen(req, timeout=40).read().decode("utf-8", "replace")
+          for url in ["https://www.youtube.com/@cityofhb/streams", "https://www.youtube.com/channel/UCqaosllyy3vU5eHadlDShpg/streams"]:
+            print("=" * 100); print("STREAMS", url)
+            try:
+              html = get(url)
+            except Exception as e:
+              print("  ERROR", e); continue
             m = re.search(r"var ytInitialData = (\{.*?\});</script>", html, re.S)
-            print("=" * 100); print("QUERY", q, "| data found:", bool(m))
+            print("  data found:", bool(m), "bytes", len(html))
             if not m: continue
             out = []; walk(json.loads(m.group(1)), out)
-            for live, vid, title, owner, chan, canon in out[:15]:
-              print(f"  {'LIVE' if live else '    '} {vid} | {title[:70]} | {owner[:35]} | {chan} {canon}")
+            for live, vid, title, views, badges in out[:25]:
+              print(f"  {'LIVE' if live else '    '} {vid} | {title[:80]} | {views} | {badges}")
+          for vid in ["mhQjsLBfOoY", "RGYlFjV-dtc", "O_E-buJR7Hs", "qY5-HXT4WSg", "TuVOKRP7IBA"]:
+            print("=" * 100); print("VIDEO", vid)
+            try:
+              html = get(f"https://www.youtube.com/watch?v={vid}")
+              m = re.search(r"var ytInitialPlayerResponse = (\{.*?\});(?:var|</script>)", html, re.S)
+              if not m:
+                print("  no player response"); continue
+              pr = json.loads(m.group(1))
+              vd = pr.get("videoDetails", {})
+              st = pr.get("playabilityStatus", {})
+              print("  title:", vd.get("title")); print("  author:", vd.get("author"), vd.get("channelId"))
+              print("  isLive:", vd.get("isLive"), "isLiveContent:", vd.get("isLiveContent"), "status:", st.get("status"), st.get("reason"))
+              mf = pr.get("microformat", {}).get("playerMicroformatRenderer", {})
+              print("  embeddable:", mf.get("isUnlisted"), "| liveBroadcast:", json.dumps(mf.get("liveBroadcastDetails")))
+            except Exception as e:
+              print("  ERROR", e)
+            try:
+              o = json.loads(get(f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid}&format=json"))
+              print("  oembed:", o.get("title"), "|", o.get("author_name"), "|", o.get("author_url"))
+            except Exception as e:
+              print("  oembed ERROR", e)
           PY
-          python3 yt.py
+          python3 yt2.py
+      - name: HBcams and Pixelcaster players
+        shell: bash
+        run: |
+          set +e +o pipefail
+          cat > hb.py <<'PY'
+          import re, urllib.request
+          UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36"
+          def get(url, ref=None):
+            h = {"User-Agent": UA}
+            if ref: h["Referer"] = ref
+            r = urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=40)
+            return r.status, r.geturl(), r.read().decode("utf-8", "replace")
+          pages = ["https://hbcams.com/webcams-huntington-beach-overview/", "https://hbcams.com/webcams-huntington-beach-pier-southwest/",
+                   "https://hbcams.com/webcams-huntington-beach-north-of-pier/", "https://hbcams.com/webcams-huntington-beach-south-of-pier/",
+                   "https://hbcams.com/faq/", "https://hbcams.com/about-hbcams/",
+                   "https://pixelcaster.com/live/surfcityusa/iframe"]
+          pats = {"iframe": r"<iframe[^>]+src=[\"']([^\"']+)", "pixelcaster": r"https?://[^\s\"'<>]*pixelcaster[^\s\"'<>]*",
+                  "m3u8": r"https?://[^\s\"'<>]+\.m3u8[^\s\"'<>]*", "video_src": r"<(?:video|source)[^>]+src=[\"']([^\"']+)",
+                  "yt": r"youtube(?:-nocookie)?\.com/(?:embed/|watch\?v=)[A-Za-z0-9_-]{11}", "script_src": r"<script[^>]+src=[\"']([^\"']+)",
+                  "data_attrs": r"data-(?:stream|src|url|player|id|camera)[a-z-]*=[\"']([^\"']+)"}
+          for url in pages:
+            print("=" * 100); print("PAGE", url)
+            try:
+              st, final, html = get(url, ref="https://www.surfcityusa.com/" if "pixelcaster" in url else None)
+            except Exception as e:
+              print("  ERROR", e); continue
+            print("  status", st, "final", final, "bytes", len(html))
+            t = re.search(r"<title>(.*?)</title>", html, re.S | re.I)
+            if t: print("  title:", " ".join(t.group(1).split())[:120])
+            for name, pat in pats.items():
+              hits = sorted(set(m if isinstance(m, str) else m[0] for m in re.findall(pat, html, re.I)))
+              hits = [h for h in hits if not re.search(r"(wp-includes|wp-content/plugins|jquery|gtag|googletag|analytics|facebook|twitter)", h, re.I)]
+              if hits:
+                print(f"  {name}:")
+                for h in hits[:15]: print("     ", h[:240])
+            if "pixelcaster" in url:
+              body = re.sub(r"\s+", " ", html)
+              for kw in ["allow", "referrer", "domain", "embed", "hls", "src", "stream", "m3u8", "mp4"]:
+                for m in re.finditer(kw, body, re.I):
+                  s = max(0, m.start() - 80); print("   ctx:", body[s:m.start() + 160].replace("\n", " "))
+                  break
+              print("  --- first 3000 chars ---"); print(html[:3000])
+          PY
+          python3 hb.py
