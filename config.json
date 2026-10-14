@@ -45,14 +45,8 @@
   },
   "cams": {
     "youtube_channel": "UCqaosllyy3vU5eHadlDShpg",
-    "snapshot_url": "https://cdn.pixelcaster.com/public.pixelcaster.com/snapshots/{slug}/latest_640x.jpg",
     "list": [
-      {"id": "pier", "name": "HB Pier", "sub": "City of Huntington Beach, from the pier", "youtube": "mhQjsLBfOoY", "match": "pier"},
-      {"id": "lifeguard", "name": "Lifeguard HQ", "sub": "City of Huntington Beach, south side of the pier", "youtube": "RGYlFjV-dtc", "match": "lifeguard"},
-      {"id": "hb-pier-north", "name": "North of pier", "sub": "HBcams, Kite Connection on the pier", "snapshot": "hb-pier-north", "url": "https://hbcams.com/webcams-huntington-beach-north-of-pier/"},
-      {"id": "hb-pier-south", "name": "South of pier", "sub": "HBcams, Kite Connection on the pier", "snapshot": "hb-pier-south", "url": "https://hbcams.com/webcams-huntington-beach-south-of-pier/"},
-      {"id": "hb-pier-west", "name": "Pier southwest", "sub": "HBcams, Kite Connection on the pier", "snapshot": "hb-pier-west", "url": "https://hbcams.com/webcams-huntington-beach-pier-southwest/"},
-      {"id": "hb-innocean", "name": "Overview", "sub": "HBcams, wide view of the pier", "snapshot": "hb-innocean", "url": "https://hbcams.com/webcams-huntington-beach-overview/"}
+      {"id": "pier", "name": "HB Pier", "sub": "City of Huntington Beach, from the pier", "youtube": "mhQjsLBfOoY", "match": "pier"}
     ]
   }
 }
