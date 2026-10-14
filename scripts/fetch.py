@@ -872,17 +872,11 @@ def build_cams(yt):
     checked = {c["id"]: c for c in ((yt or {}).get("cams") or [])}
     out = []
     for cam in cfg.get("list", []):
-        item = {"id": cam["id"], "name": cam["name"], "sub": cam.get("sub"), "url": cam.get("url"),
-                "youtube": None, "snapshot_url": None, "live": None, "title": None}
-        if cam.get("youtube") or cam.get("match"):
-            st = checked.get(cam["id"]) or {}
-            item["youtube"] = st.get("youtube") or cam.get("youtube")
-            item["live"], item["title"] = st.get("live"), st.get("title")
-            if item["youtube"]:
-                item["url"] = item["url"] or f"https://www.youtube.com/watch?v={item['youtube']}"
-        elif cam.get("snapshot") and cfg.get("snapshot_url"):
-            item["snapshot_url"] = cfg["snapshot_url"].format(slug=cam["snapshot"])
-        out.append(item)
+        st = checked.get(cam["id"]) or {}
+        vid = st.get("youtube") or cam.get("youtube")
+        out.append({"id": cam["id"], "name": cam["name"], "sub": cam.get("sub"), "youtube": vid,
+                    "url": cam.get("url") or (f"https://www.youtube.com/watch?v={vid}" if vid else None),
+                    "live": st.get("live"), "title": st.get("title")})
     return out
 
 
