@@ -603,34 +603,31 @@
     const cam = (data.cams || []).find((c) => c.youtube);
     card.hidden = !cam;
     if (!cam) return;
-    const stage = clear($('#cam-stage'));
-    const poster = el('img', { class: 'cam-poster', alt: '', src: `https://i.ytimg.com/vi/${cam.youtube}/maxresdefault.jpg` });
-    poster.addEventListener('error', () => {
-      poster.addEventListener('error', () => poster.remove(), { once: true });
-      poster.src = `https://i.ytimg.com/vi/${cam.youtube}/hqdefault.jpg`;
-    }, { once: true });
-    const status = cam.live ? el('span', { class: 'pill good', text: 'Live' })
-      : cam.live === false ? el('span', { class: 'pill', text: 'Offline' }) : null;
-    const overlay = el('div', { class: 'cam-overlay' }, [
-      el('div', { class: 'cam-name' }, [cam.name, status]),
-      el('div', { class: 'cam-sub', text: cam.sub || '' }),
-    ]);
-    const play = el('button', { class: 'cam-play', type: 'button', 'aria-label': `Play the ${cam.name} cam` }, [
-      svgEl('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, [svgEl('path', { d: 'M8 5v14l11-7z' })]),
-    ]);
-    play.addEventListener('click', () => {
-      clear(stage).append(el('iframe', {
-        src: `https://www.youtube-nocookie.com/embed/${cam.youtube}?autoplay=1&mute=1&playsinline=1&rel=0`,
-        title: `${cam.name} live cam`, allow: 'autoplay; fullscreen; picture-in-picture', allowfullscreen: '',
+    const stage = $('#cam-stage');
+    // YouTube's own player, loaded in place: one tap on its play button starts the stream
+    // with a direct user gesture, which works in every browser. No autoplay tricks.
+    // Only (re)created when the video id changes, so switching day tabs keeps it playing.
+    const src = `https://www.youtube.com/embed/${cam.youtube}?playsinline=1&rel=0`;
+    if (stage.dataset.src !== src) {
+      clear(stage);
+      stage.dataset.src = src;
+      stage.append(el('iframe', {
+        src, title: `${cam.name} live cam`, loading: 'lazy',
+        allow: 'autoplay; fullscreen; picture-in-picture', allowfullscreen: '',
         referrerpolicy: 'strict-origin-when-cross-origin',
       }));
-    });
-    stage.append(poster, overlay, play);
-    if (cam.live === false) stage.classList.add('off');
-    const meta = clear($('#cams-meta'));
+    }
+    const status = cam.live ? el('span', { class: 'pill good', text: 'Live' })
+      : cam.live === false ? el('span', { class: 'pill', text: 'Offline' }) : null;
+    clear($('#cam-cap')).append(
+      el('div', { class: 'cam-text' }, [
+        el('div', { class: 'cam-name' }, [cam.name, status]),
+        el('div', { class: 'cam-sub', text: cam.sub || '' }),
+      ]),
+      cam.url ? el('a', { class: 'cam-open', href: cam.url, target: '_blank', rel: 'noopener', text: 'YouTube ↗' }) : null,
+    );
     const checked = data.sources?.yt_cams?.fetched_at;
-    meta.append(`tap to play, starts muted${checked ? ` · live check ${fmt.time(checked)}` : ''} · `);
-    meta.append(el('a', { href: cam.url, target: '_blank', rel: 'noopener', text: 'YouTube ↗' }));
+    $('#cams-meta').textContent = checked ? `live check ${fmt.time(checked)}` : '';
   }
 
   // ------------------------------------------------------------ render: sources
