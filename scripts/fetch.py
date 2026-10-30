@@ -1324,10 +1324,193 @@ def size_word(high):
     return "Big"
 
 
+# ---------------------------------------------------------------- tide vs surf
+
+# What a beach break does at each stage of the tide, by how much push the swell
+# has. High water softens small swell: it rolls through fat and slow and breaks
+# near shore; with enough period or size the swell breaks through it. Low water
+# steepens things, and past a point bigger swell stands up and closes out on the
+# outer bar. A rule of thumb for the pier, not a measurement: the reported surf
+# height is left alone and this says what the tide does to it.
+TIDE_MATRIX = {
+    "very high": {"small": "swamped", "medium": "fat", "big": "fat"},
+    "high": {"small": "fat", "medium": "fat", "big": "fine"},
+    "mid": {"small": "fine", "medium": "fine", "big": "fine"},
+    "low": {"small": "fine", "medium": "steep", "big": "closeouts"},
+    "very low": {"small": "steep", "medium": "closeouts", "big": "closeouts"},
+}
+# rank 0: not a factor, 1: takes the edge off, 2: wrecks the dawn session
+TIDE_EFFECTS = {
+    "fine": {"rank": 0, "feel": None, "word": "fine"},
+    "fat": {"rank": 1, "feel": "smaller", "word": "fat"},
+    "steep": {"rank": 1, "feel": None, "word": "steep"},
+    "swamped": {"rank": 2, "feel": "smaller", "word": "swamped"},
+    "closeouts": {"rank": 2, "feel": "bigger", "word": "closing out"},
+}
+
+
+def tide_cfg():
+    cfg = CONFIG.get("tide") or {}
+    return {"very_high": cfg.get("very_high_ft", 5.5), "high": cfg.get("high_ft", 4.5),
+            "low": cfg.get("low_ft", 1.0), "very_low": cfg.get("very_low_ft", 0.0),
+            "dawn_hours": cfg.get("dawn_hours", 2)}
+
+
+def tide_stage(ft, cfg):
+    if ft >= cfg["very_high"]:
+        return "very high"
+    if ft >= cfg["high"]:
+        return "high"
+    if ft < cfg["very_low"]:
+        return "very low"
+    if ft < cfg["low"]:
+        return "low"
+    return "mid"
+
+
+def swell_class(surf_high, period):
+    """small / medium / big from the surf height, nudged by period: a long-period
+    swell has the push to break through a high tide, short-period wind swell does not."""
+    punch = surf_high + (1.0 if (period or 0) >= 14 else -0.5 if period and period < 10 else 0.0)
+    return "small" if punch <= 3 else "medium" if punch <= 5 else "big"
+
+
+def fmt_tide(ft):
+    return f"{ft:.1f} ft"
+
+
+def tide_effect(d, sun, surf, tides, period):
+    """What the tide does to the surf this morning: at dawn, and when that changes.
+
+    The dawn session is the first couple of hours after sunrise, judged at its
+    middle. The rest of the morning (to the end of morning_hours) is scanned for
+    the first time the tide gets better, or worse, than that.
+    """
+    curve = (tides or {}).get("curve") or []
+    high = (surf or {}).get("high")
+    if not curve or high is None or not sun.get("sunrise"):
+        return None
+    cfg = tide_cfg()
+    swell = swell_class(high, period)
+    sunrise = parse_iso(sun["sunrise"])
+    session = timedelta(hours=cfg["dawn_hours"])
+    mid = sunrise + session / 2
+    end = local_hour(d, CONFIG["morning_hours"][1])
+
+    def at(t):
+        ft = tide_at(curve, t)
+        return TIDE_MATRIX[tide_stage(ft, cfg)][swell], ft
+
+    effect, dawn_ft = at(mid)
+    t0, t1 = tide_at(curve, sunrise), tide_at(curve, sunrise + session)
+    trend = "rising" if t1 > t0 + 0.2 else "dropping" if t1 < t0 - 0.2 else "slack"
+    rank = TIDE_EFFECTS[effect]["rank"]
+
+    # runs of one effect from the middle of the dawn session to the end of the morning;
+    # a run ends where the next one starts
+    raw = []
+    t = mid
+    while t <= end:
+        eff, ft = at(t)
+        if not raw or raw[-1]["effect"] != eff:
+            raw.append({"effect": eff, "start": round_minutes(t, 5), "ft": ft})
+        t += timedelta(minutes=10)
+    for run, nxt in zip(raw, raw[1:] + [None]):
+        run["end"] = nxt["start"] if nxt else end
+    # a blip under half an hour at the turn of the tide is not worth a mention
+    runs = []
+    for run in raw:
+        if runs and (run["end"] - run["start"] < timedelta(minutes=30) or runs[-1]["effect"] == run["effect"]):
+            runs[-1]["end"] = run["end"]
+        else:
+            runs.append(run)
+    for run in runs:
+        run["last"] = run is runs[-1]
+
+    def span(run):
+        return {"start": iso(run["start"]), "end": iso(run["end"]), "ft": round(run["ft"], 1),
+                "label": f"after {fmt_time(run['start'])}" if run["last"] else fmt_range(run["start"], run["end"])}
+
+    hilo = [{"time": parse_iso(e["time"]), "ft": e["ft"], "type": e["type"]} for e in (tides or {}).get("hilo", [])]
+
+    def nearest(kind, around, hours=4):
+        cands = [e for e in hilo if e["type"] == kind and abs((e["time"] - around).total_seconds()) <= hours * 3600]
+        e = min(cands, key=lambda e: abs((e["time"] - around).total_seconds()), default=None)
+        return {"time": iso(e["time"]), "ft": e["ft"], "type": kind} if e else None
+
+    # when it gets better than dawn (if dawn is a problem), else when it gets worse
+    better = worse = None
+    run = next((r for r in runs[1:] if TIDE_EFFECTS[r["effect"]]["rank"] == 0), None) if rank > 0 else None
+    if run:
+        better = span(run)
+    else:
+        run = next((r for r in runs[1:] if TIDE_EFFECTS[r["effect"]]["rank"] > rank), None)
+        if run:
+            worse = {**span(run), "effect": run["effect"], "word": TIDE_EFFECTS[run["effect"]]["word"],
+                     "peak": nearest("H" if run["effect"] in ("fat", "swamped") else "L", run["start"], 6)}
+
+    def worse_sentence(w):
+        tail = (f" as it {'fills' if w['effect'] in ('fat', 'swamped') else 'drains'} to "
+                f"{fmt_tide(w['peak']['ft'])} at {fmt_time(parse_iso(w['peak']['time']))}" if w.get("peak") else "")
+        return f"{w['word'].capitalize()} {w['label']}{tail}."
+
+    high_side = effect in ("fat", "swamped")
+    peak = nearest("H" if high_side else "L", mid) if rank > 0 else None
+    near = peak is not None and abs((parse_iso(peak["time"]) - mid).total_seconds()) <= 1.5 * 3600
+    who = (f"a {fmt_tide(peak['ft'])} {'high' if high_side else 'low'} tide at {fmt_time(parse_iso(peak['time']))}" if near
+           else f"{fmt_tide(dawn_ft)} of tide at dawn")
+    verb = {"swamped": "swamps it", "fat": "makes it fat", "steep": "makes it steep", "closeouts": "drains it"}.get(effect)
+    clause = f"{who} {verb}{' at dawn' if near else ''}" if verb else None
+    end_lbl = f"{end.hour % 12 or 12} {'PM' if end.hour >= 12 else 'AM'}"
+    surf_txt = (surf.get("text") or "").split(",")[0]
+
+    if effect == "fine":
+        label = "Tide is fine at dawn" if worse else "Tide is fine all morning"
+        if worse:
+            label += f", {worse['word']} {worse['label']}"
+            note = f"Tide is fine at dawn ({fmt_tide(dawn_ft)}, {trend}). {worse_sentence(worse)}"
+        else:
+            end_ft = tide_at(curve, end)
+            note = (f"Tide is fine all morning: {fmt_tide(dawn_ft)} at dawn, "
+                    f"{'rising' if end_ft > dawn_ft + 0.2 else 'dropping' if end_ft < dawn_ft - 0.2 else 'holding'}"
+                    + (f" to {fmt_tide(end_ft)} by {end_lbl}." if abs(end_ft - dawn_ft) > 0.2 else f" near {fmt_tide(end_ft)} through {end_lbl}."))
+    else:
+        label = {"swamped": "High tide is swamping it at dawn", "fat": "High tide is making it fat at dawn",
+                 "steep": "Low tide is making it steep at dawn", "closeouts": "Low tide is making it close out at dawn"}[effect]
+        what = {"swamped": f"{surf_txt} rolls through fat and slow, breaking near shore" if surf_txt else "it rolls through fat and slow",
+                "fat": f"rides smaller than {surf_txt}" if surf_txt else "rides smaller than the number",
+                "steep": "steeper and quicker, more shorebreak",
+                "closeouts": f"{surf_txt} stands up and closes out" if surf_txt else "it stands up and closes out"}[effect]
+        head = f"{clause[0].upper()}{clause[1:]}: {what}."
+        coming = ""  # the extreme still to come, when the clause could not name it
+        if peak and not near and parse_iso(peak["time"]) > mid:
+            coming = (f" It {'fills' if high_side else 'drains'} to {fmt_tide(peak['ft'])} "
+                      f"at {fmt_time(parse_iso(peak['time']))}.")
+        if better:
+            label += f", better {better['label']}"
+            note = f"{head}{coming} Better {better['label']} ({fmt_tide(better['ft'])} and {'dropping' if high_side else 'rising'})."
+        elif worse:
+            label += f", {worse['word']} {worse['label']}"
+            note = f"{head} {worse_sentence(worse)}"
+        else:
+            label += f", no help before {end_lbl}"
+            note = f"{head}{coming} No help from the tide before {end_lbl}."
+
+    return {
+        "effect": effect, "rank": rank, "feel": TIDE_EFFECTS[effect]["feel"], "word": TIDE_EFFECTS[effect]["word"],
+        "swell": swell, "period_s": period,
+        "dawn": {"time": iso(mid), "ft": round(dawn_ft, 1), "trend": trend, "stage": tide_stage(dawn_ft, cfg)},
+        "peak": peak, "better": better, "worse": worse,
+        "clause": clause, "label": label, "note": note,
+        "thresholds": {k: cfg[k] for k in ("very_high", "high", "low", "very_low")},
+    }
+
+
 def make_read(day, water, suit):
     surf = day.get("surf") or {}
     high = surf.get("high")
     size = size_word(high)
+    tide = day.get("tide_effect") or {}
     win = day.get("window")
     sun = day.get("sun_out") or {}
     dawn_q = [day["hours"][h].get("quality") for h in range(6, 9)]
@@ -1336,10 +1519,17 @@ def make_read(day, water, suit):
     if dawn_q:
         worst = max(QUALITY_RANK.get(q, 3) for q in dawn_q)
         wind_word = ["glassy", "lightly textured", "bumpy", "blown out"][min(worst, 3)]
+    clean = wind_word in ("glassy", "lightly textured", None)
     if size is None:
         head = "No surf forecast yet."
     elif size == "Flat":
         head = "Flat. Longboard or coffee."
+    elif tide.get("rank", 0) >= 2 and tide.get("clause"):
+        # the tide wrecks the dawn session: that is the read, whatever the swell says
+        who = f"{size} and {wind_word}" if wind_word else size
+        advice = (f"Better {tide['better']['label']}." if tide.get("better")
+                  else "Not worth rushing." if size in ("Tiny", "Small", "Fun-size") else "Pick your moment.")
+        head = f"{who}, {'but' if clean else 'and'} {tide['clause']}. {advice}"
     elif size in ("Tiny", "Small"):
         head = f"{size} and {wind_word} at dawn. Fun longboard morning." if wind_word in ("glassy", "lightly textured") else f"{size} and {wind_word or 'windy'}. Not worth rushing."
     elif size == "Fun-size":
@@ -1349,6 +1539,8 @@ def make_read(day, water, suit):
     else:
         head = "Big. Sets are real. Respect it." if wind_word in ("glassy", "lightly textured", None) else f"Big and {wind_word}. Watch from the pier."
     parts = []
+    if tide.get("label") and tide.get("rank", 0) < 2 and (tide["rank"] == 1 or tide.get("worse")):
+        parts.append(tide["label"] + ".")
     if sun.get("kind") == "sunrise":
         parts.append(f"Sunny from first light ({fmt_time(parse_iso(day['sun']['first_light']))}).")
     elif sun.get("kind") == "crossing" and sun.get("time"):
@@ -1359,7 +1551,8 @@ def make_read(day, water, suit):
         parts.append(suit["name"] + ".")
     if win:
         parts.append(f"Best window {win['label']}.")
-    return {"headline": head, "sub": " ".join(parts), "size": size, "wind": wind_word}
+    return {"headline": head, "sub": " ".join(parts), "size": size, "wind": wind_word,
+            "tide": tide.get("effect")}
 
 
 def build_week(sec, today):
@@ -1506,6 +1699,10 @@ def build(src, prev):
         sun_out = sun_out_analysis(d, rows, sun)
         window = best_window(d, rows, sun, tide_curve)
         surf = day_surf(d, rows, sections, today)
+        model = surf.get("model") or {}
+        period = (model.get("swell_period_s") or model.get("period_s")
+                  or next((b.get("dpd_s") for b in buoys if b.get("dpd_s")), None))
+        tide_fx = tide_effect(d, sun, surf, tides, period)
         weather = day_weather(d, sections, rows)
         epa_sec = sections.get("epa_uv") or {}
         uv = day_uv(rows, (epa_sec.get("days") or {}).get(d.isoformat()),
@@ -1528,6 +1725,7 @@ def build(src, prev):
             "hours": rows,
             "window": window,
             "surf": surf,
+            "tide_effect": tide_fx,
             "weather": weather,
             "uv": uv,
             "dawn_air_f": dawn_air,
@@ -1591,6 +1789,7 @@ def summary(data):
         f"**{day['read']['headline']}** {day['read']['sub']}",
         "",
         f"- Surf: {day['surf'].get('text') or 'n/a'} ({day['surf'].get('source') or 'no source'})",
+        f"- Tide: {day['tide_effect']['note'] if day.get('tide_effect') else 'n/a'}",
         f"- Water: {data['water']['f'] if data.get('water') else 'n/a'}° → {day['suit']['name'] if day.get('suit') else 'n/a'}",
         f"- Sunrise {fmt_time(parse_iso(day['sun']['sunrise']))}, sun out: {day['sun_out']['label']} ({day['sun_out'].get('confidence') or 'no'} confidence)",
         f"- Window: {day['window']['label'] if day.get('window') else 'none found'}",
