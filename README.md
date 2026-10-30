@@ -16,7 +16,8 @@ It updates itself four times a day.
    - the City of Huntington Beach's YouTube channel, to check that its pier live cam
      is streaming and pick up its current video id (the cam lives in `config.json`)
    It computes sunrise, first light, the sun-out time, the paddle-out window,
-   the wetsuit recommendation and a one-line read, then writes `site/data.json`.
+   the wetsuit recommendation, what the tide does to the surf at dawn (and when
+   that changes) and a one-line read, then writes `site/data.json`.
    When a source fails, the previous value is kept and flagged stale.
 2. `.github/workflows/update.yml` runs that script on a schedule
    (4:37 AM, 6:41 AM, 1:07 PM and 7:23 PM Pacific), commits the new data and
@@ -36,8 +37,17 @@ It updates itself four times a day.
 
 Everything personal lives in `config.json`: location, stations, the wetsuit
 rules (`suit.rules`, `suit.runs_cold`), what counts as "sun out"
-(`sun.clear_threshold_pct`), and the wind thresholds for glassy / textured /
-blown out.
+(`sun.clear_threshold_pct`), the wind thresholds for glassy / textured /
+blown out, and the tide stages (`tide`, in feet MLLW at the tide station).
+
+The tide call is a rule of thumb for the pier's beach break, not a measurement,
+so the reported surf height is never changed by it. Above `tide.high_ft` small
+swell gets fat and rides smaller than the number; above `tide.very_high_ft` it
+gets swamped. Below `tide.low_ft` things get steep; below `tide.very_low_ft`
+bigger swell closes out. Swell is classed as small (surf to 3 ft), medium (to
+5 ft) or big, after a foot of credit for long-period swell (14 s+) and half a
+foot off for short wind swell (under 10 s). "Dawn" is the first `tide.dawn_hours`
+after sunrise, judged at its middle.
 
 ## Local preview
 

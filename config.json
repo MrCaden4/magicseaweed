@@ -32,6 +32,13 @@
     "offshore_half_width_deg": 60
   },
   "morning_hours": [5, 13],
+  "tide": {
+    "very_high_ft": 5.5,
+    "high_ft": 4.5,
+    "low_ft": 1.0,
+    "very_low_ft": 0.0,
+    "dawn_hours": 2
+  },
   "uv": {"burn_threshold": 6},
   "suit": {
     "runs_cold": false,

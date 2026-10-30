@@ -113,12 +113,15 @@ svg { display: block; }
 /* ---------------------------------------------------------------- header */
 .top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px 12px;
   padding-block: 8px 28px;
 }
-.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* The brand yields first, so the meta block only drops to its own line when it
+   cannot fit at all (the stale-forecast pill on a phone), never over the brand. */
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 0; }
 .brand-mark { width: 30px; height: 30px; color: var(--accent); flex: none; }
 .brand-name {
   font-weight: 700;
@@ -128,8 +131,9 @@ svg { display: block; }
   text-transform: uppercase;
 }
 .brand-sub { color: var(--ink-3); font-size: 13px; }
-.top-meta { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 13px; }
+.top-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 10px; color: var(--ink-3); font-size: 13px; }
 .top-meta .updated { white-space: nowrap; }
+.top-right { display: inline-flex; align-items: center; gap: 10px; }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: 999px;
@@ -292,7 +296,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-
 .hours span:nth-child(even) { visibility: visible; }
 @media (max-width: 420px) { .hours span:nth-child(even) { visibility: hidden; } }
 @media (max-width: 520px) { .hide-narrow { display: none; } }
-#kpi-window .kpi-value { font-size: clamp(24px, 6.6vw, 42px); }
+/* "6:40 AM–12:00 PM" may break after the dash (a <wbr> in the markup), nowhere else */
+#kpi-window .kpi-value { font-size: clamp(24px, 6.6vw, 42px); white-space: normal; }
 .overlay { position: absolute; inset: 0; pointer-events: none; }
 .marker { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px dashed var(--ink-3); opacity: 0.9; }
 .marker.sunrise { border-left-style: solid; border-color: var(--accent); opacity: 0.7; }
