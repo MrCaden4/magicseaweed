@@ -180,8 +180,30 @@
 
     const win = day.window;
     const sameHalf = win && fmt.time(win.start).slice(-2) === fmt.time(win.end).slice(-2);
-    setKpi('window', win ? `${sameHalf ? fmt.hm(win.start) : fmt.time(win.start)}–${fmt.hm(win.end)}` : '—', win ? fmt.time(win.end).slice(-2) : '',
+    const nb = (s) => s.replace(' ', '\u00a0'); // "6:40 AM" never breaks inside; the <wbr> after the dash is the one break
+    const winVal = win ? el('span', {}, [nb(sameHalf ? fmt.hm(win.start) : fmt.time(win.start)), '–', el('wbr'), fmt.hm(win.end)]) : '—';
+    setKpi('window', winVal, win ? fmt.time(win.end).slice(-2) : '',
       win ? `${win.why}${win.tide ? ` · tide ${win.tide.start_ft}→${win.tide.end_ft} ft ${win.tide.trend}` : ''}` : 'no clean window before noon');
+    fitWindowKpi();
+  }
+  // "6:45 AM–1:00 PM" is the one hero value that can outgrow its column: shrink it until it
+  // fits on one line, and only below 24px let it break after the dash (the <wbr> in its markup).
+  function fitWindowKpi() {
+    const v = $('#kpi-window .kpi-value');
+    if (!v || !v.clientWidth) return;
+    const wbr = v.querySelector('wbr');
+    if (wbr) wbr.style.display = 'none'; // a <wbr> breaks even under nowrap, so hide it while measuring
+    v.style.fontSize = '';
+    v.style.whiteSpace = 'nowrap';
+    let size = parseFloat(getComputedStyle(v).fontSize);
+    while (v.scrollWidth > v.clientWidth && size > 24) {
+      size -= 1;
+      v.style.fontSize = `${size}px`;
+    }
+    if (v.scrollWidth > v.clientWidth) {
+      v.style.whiteSpace = '';
+      if (wbr) wbr.style.display = '';
+    }
   }
   function setKpi(key, value, unit, note, boldNote) {
     const v = $(`#kpi-${key} .kpi-value`);
@@ -699,6 +721,8 @@
       renderAll();
       $('#main').hidden = false;
       $('#loading').hidden = true;
+      fitWindowKpi(); // the first renderAll ran while #main was hidden
+      if (document.fonts?.ready) document.fonts.ready.then(fitWindowKpi); // the web font changes the widths
     } catch (err) {
       $('#loading').hidden = true;
       const box = $('#error');
@@ -710,7 +734,7 @@
   let resizeT = null;
   window.addEventListener('resize', () => {
     clearTimeout(resizeT);
-    resizeT = setTimeout(() => { if (state.data) renderTide(state.data, currentDay()); }, 120);
+    resizeT = setTimeout(() => { if (state.data) { renderTide(state.data, currentDay()); fitWindowKpi(); } }, 120);
   });
 
   boot();
