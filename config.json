@@ -1,5 +1,5 @@
 {
-  "site_name": "HB Pier",
+  "site_name": "Glassline HB Surf Report",
   "location": {
     "name": "Huntington Beach Pier",
     "short": "HB Pier",
@@ -10,7 +10,7 @@
     "srf_zone_keyword": "Orange County"
   },
   "timezone": "America/Los_Angeles",
-  "user_agent": "hb-surf-site/1.0 (github.com/MrCaden4/magicseaweed)",
+  "user_agent": "glassline-surf-report/1.0 (github.com/MrCaden4/magicseaweed)",
   "stations": {
     "tide": "9410580",
     "tide_name": "Newport Bay Entrance",
@@ -30,6 +30,18 @@
     "bumpy_max_mph": 14,
     "offshore_center_deg": 35,
     "offshore_half_width_deg": 60
+  },
+  "live_wind": {
+    "refresh_s": 180,
+    "live_max_age_min": 20,
+    "max_age_min": 120,
+    "history_h": 6,
+    "stations": [
+      {"provider": "coops", "id": "9410665", "name": "Long Beach Pier J", "kind": "NOAA harbor station", "lat": 33.733, "lon": -118.1857},
+      {"provider": "nws", "id": "AR684", "name": "Huntington Beach", "kind": "home station (CWOP)", "lat": 33.7075, "lon": -118.0305},
+      {"provider": "nws", "id": "KSNA", "name": "John Wayne Airport", "kind": "airport", "lat": 33.6798, "lon": -117.8674},
+      {"provider": "nws", "id": "KSLI", "name": "Los Alamitos", "kind": "airfield", "lat": 33.7963, "lon": -118.0418}
+    ]
   },
   "morning_hours": [5, 13],
   "tide": {

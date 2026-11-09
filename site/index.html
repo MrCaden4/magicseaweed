@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>HB Pier Dawn Patrol</title>
-  <meta name="description" content="Daily surf, water temperature, wetsuit call and sun-out time for Huntington Beach Pier.">
+  <title>Glassline HB Surf Report</title>
+  <meta name="description" content="Surf, live wind, water temperature, wetsuit call and sun-out time for Huntington Beach Pier.">
+  <meta name="apple-mobile-web-app-title" content="Glassline">
   <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#0b1520">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='13' r='7' fill='%23f0b64a'/%3E%3Cpath d='M2 24c4-4 8-4 12 0s8 4 12 0' fill='none' stroke='%234dbdb5' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
@@ -23,8 +24,8 @@
           <path d="M6 28c3.3-3.3 6.7-3.3 10 0s6.7 3.3 10 0" fill="none" stroke="var(--sea)" stroke-width="2" stroke-linecap="round" opacity=".55"/>
         </svg>
         <div>
-          <div class="brand-name">HB Pier</div>
-          <div class="brand-sub" id="loc-name">Huntington Beach Pier</div>
+          <div class="brand-name">Glassline</div>
+          <div class="brand-sub">HB Surf Report</div>
         </div>
       </div>
       <div class="top-meta">
@@ -60,6 +61,18 @@
       </section>
 
       <div class="panels">
+        <section class="card" aria-labelledby="h-live" id="live-card" hidden>
+          <div class="card-head"><h2 id="h-live">Wind right now</h2><span class="card-meta" id="live-meta">checking the stations…</span></div>
+          <div class="live-grid">
+            <div class="live-read" id="live-read"></div>
+            <div class="live-chart">
+              <div class="chart" id="wind-chart"></div>
+              <div class="legend" id="wind-legend"></div>
+            </div>
+          </div>
+          <ul class="stations" id="live-stations"></ul>
+        </section>
+
         <section class="card" aria-labelledby="h-morning">
           <div class="card-head"><h2 id="h-morning">The morning</h2><span class="card-meta">sky, wind and air, 5 AM to 1 PM</span></div>
           <p class="sun-line" id="sun-line"></p>
@@ -124,7 +137,7 @@
         <footer class="sources">
           <div id="sources-summary"></div>
           <ul class="src-list" id="sources"></ul>
-          <div>Sunrise and sunset are computed for the pier. Surf heights from NWS are breaking-wave faces; the model estimate converts open-water wave height and is rougher. The tide line is a rule of thumb for the pier's beach break (high water softens small swell, very low water closes out bigger swell); the surf height itself is never adjusted for it. Not for navigation, obviously.</div>
+          <div>Live wind comes straight from the stations, checked every few minutes while this page is open: NOAA's Long Beach Pier J (6-minute readings, about 10 miles up the coast) first, then the NWS stations around Huntington Beach. None of them sits on the pier, so treat the reading as a close proxy. Sunrise and sunset are computed for the pier. Surf heights from NWS are breaking-wave faces; the model estimate converts open-water wave height and is rougher. The tide line is a rule of thumb for the pier's beach break (high water softens small swell, very low water closes out bigger swell); the surf height itself is never adjusted for it. Not for navigation, obviously.</div>
         </footer>
       </div>
     </main>

@@ -159,6 +159,17 @@ def ang_diff(a, b):
     return min(d, 360 - d)
 
 
+def distance_bearing(lat1, lon1, lat2, lon2):
+    """Great-circle miles and initial bearing (degrees) from point 1 to point 2."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    miles = 3958.8 * 2 * math.asin(math.sqrt(a))
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return miles, math.degrees(math.atan2(y, x)) % 360
+
+
 def r1(x):
     return None if x is None else round(x, 1)
 
@@ -1589,6 +1600,48 @@ def build_week(sec, today):
     return days
 
 
+def live_wind_block():
+    """What the page needs to poll the wind stations itself: the stations (with how far
+    they are from the pier), how often to check, and the wind rules, so the live reading
+    is called glassy / bumpy / offshore by the same thresholds as the forecast."""
+    cfg = CONFIG.get("live_wind") or {}
+    stations = []
+    for st in cfg.get("stations", []):
+        if not (st.get("provider") in ("coops", "nws") and st.get("id")):
+            continue
+        out = dict(st)
+        if st.get("lat") is not None and st.get("lon") is not None:
+            miles, bearing = distance_bearing(LAT, LON, st["lat"], st["lon"])
+            out["distance_mi"] = round(miles, 1)
+            out["bearing"] = compass(bearing)
+        stations.append(out)
+    if not stations:
+        return None
+    w = CONFIG["wind"]
+    return {
+        "refresh_s": cfg.get("refresh_s", 180),
+        "live_max_age_min": cfg.get("live_max_age_min", 20),
+        "max_age_min": cfg.get("max_age_min", 120),
+        "history_h": cfg.get("history_h", 6),
+        "stations": stations,
+        "rules": {k: w[k] for k in ("glassy_max_mph", "light_max_mph", "bumpy_max_mph",
+                                    "offshore_center_deg", "offshore_half_width_deg")},
+        "beach_faces_deg": LOC.get("beach_faces_deg"),
+    }
+
+
+def wind_forecast(days):
+    """Hourly forecast wind for the days on the page, for the live-wind chart."""
+    out = []
+    for day in days:
+        for r in day.get("hours") or []:
+            if r.get("wind_mph") is None:
+                continue
+            out.append({"time": r["time"], "mph": r["wind_mph"], "deg": r.get("wind_deg"),
+                        "dir": r.get("wind_dir") or None, "src": r.get("wind_src") or "nws"})
+    return out
+
+
 def tide_now(tides, now):
     if not tides:
         return None
@@ -1733,6 +1786,7 @@ def build(src, prev):
         })
 
     water = pick_water(sections, days[0]["surf"], buoys)
+    wind_fc = wind_forecast(days)
     for day in days:
         day["suit"] = pick_suit(water["f"], day["dawn_air_f"]) if water else None
         day["read"] = make_read(day, water, day["suit"])
@@ -1771,6 +1825,8 @@ def build(src, prev):
         "week": build_week(sections, today),
         "alerts": (sections.get("nws_alerts") or {}).get("alerts", []),
         "cams": build_cams(sections.get("yt_cams")),
+        "live_wind": live_wind_block(),
+        "wind_forecast": wind_fc,
         "afd": sections.get("nws_afd"),
         "srf": {k: v for k, v in (sections.get("nws_srf") or {}).items() if k in ("found", "issued", "office", "zone_header")},
         "sources": sources,
@@ -1784,7 +1840,7 @@ def build(src, prev):
 def summary(data):
     day = data["days"][0]
     lines = [
-        f"## {data['location']['short']} — {day['pretty']}",
+        f"## {data.get('site_name') or data['location']['short']} — {day['pretty']}",
         "",
         f"**{day['read']['headline']}** {day['read']['sub']}",
         "",

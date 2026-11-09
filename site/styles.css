@@ -1,4 +1,4 @@
-/* HB Pier — dawn patrol dashboard
+/* Glassline HB Surf Report — dawn patrol dashboard
    Layout: one column of stacked panels on a phone; a hero across the top and a
    two-column grid of panels from 760px. Dark ("pre-dawn") is the base theme
    because the page gets read at 5 AM; light ("after the burn-off") follows the
@@ -218,6 +218,71 @@ svg { display: block; }
 .cam-sub { color: var(--ink-3); font-size: 13px; margin-top: 2px; }
 .cam-open { color: var(--ink-2); font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; }
 .cam-open:hover { color: var(--ink); text-decoration: underline; }
+
+/* ---------------------------------------------------------------- live wind */
+.live-grid { display: grid; gap: 18px; align-items: center; }
+@media (min-width: 760px) { .live-grid { grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 28px; } }
+.live-read { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.live-top { display: flex; align-items: center; gap: 16px; }
+.live-num { display: grid; gap: 4px; min-width: 0; }
+.live-val {
+  font-size: clamp(40px, 9vw, 52px); font-weight: 700; font-variation-settings: "wdth" 112;
+  line-height: 1; letter-spacing: -0.01em; white-space: nowrap;
+}
+.live-val small { font-size: 15px; font-weight: 600; color: var(--ink-2); margin-left: 5px; font-variation-settings: "wdth" 100; letter-spacing: 0; }
+.live-sub { color: var(--ink-2); font-size: 13px; }
+.live-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.live-src { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; color: var(--ink-3); font-size: 13px; }
+.live-src a, .station .st-name { color: var(--ink-2); font-weight: 600; text-decoration: none; }
+.live-src a:hover, .station .st-name:hover { color: var(--ink); text-decoration: underline; }
+.pill.live { color: var(--good); border-color: currentColor; }
+.pill.live::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 0 0 currentColor; animation: live-pulse 2s ease-out infinite;
+}
+@keyframes live-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--good) 60%, transparent); }
+  80%, 100% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--good) 0%, transparent); }
+}
+.dial { width: 96px; height: 96px; flex: none; }
+.dial-face { fill: var(--bg-3); stroke: var(--line-2); stroke-width: 1.5; }
+.dial-sea { fill: color-mix(in oklab, var(--sea) 24%, transparent); }
+.dial-shore { stroke: var(--sea); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: 0.8; }
+.dial-tick { stroke: var(--ink-3); stroke-width: 2; stroke-linecap: round; }
+.dial-n { fill: var(--ink-3); font-size: 11px; font-weight: 700; font-family: var(--font); }
+.dial-arrow { stroke: var(--ink); stroke-width: 6; stroke-linecap: round; }
+.dial-head { fill: var(--ink); stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; }
+.dial-hub { fill: var(--ink-3); }
+.live-chart { display: grid; gap: 8px; min-width: 0; }
+.chart .future { fill: var(--ink); opacity: 0.035; }
+.chart .fcst { fill: none; stroke: var(--ink-3); stroke-width: 1.8; stroke-dasharray: 5 4; stroke-linejoin: round; }
+.chart .gust { fill: none; stroke: var(--sea); stroke-width: 1.6; stroke-dasharray: 0.1 4; stroke-linecap: round; opacity: 0.9; }
+.chart .obs-dot { fill: var(--sea); stroke: var(--bg-2); stroke-width: 2.5; }
+.chart .dir { fill: none; stroke: var(--ink-3); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.chart .dir.obs { stroke: var(--sea-text); }
+.chart circle.dir { fill: var(--ink-3); stroke: none; }
+.chart circle.dir.obs { fill: var(--sea-text); }
+.legend .sw.obs { background: var(--sea); height: 3px; }
+.legend .sw.gust { height: 0; border-top: 2.5px dotted var(--sea); border-radius: 0; }
+.legend .sw.fcst { height: 0; border-top: 2px dashed var(--ink-3); border-radius: 0; }
+.stations {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: 0 22px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+}
+.station {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px;
+}
+.station .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+.station .dot.stale { background: var(--warn); }
+.station .dot.off { background: var(--bad); }
+.st-main, .st-read { display: grid; min-width: 0; }
+.st-read { text-align: right; }
+.station .st-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.station.lead .st-name { color: var(--ink); }
+.st-val { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.st-val.muted { color: var(--ink-3); font-weight: 600; }
+.st-sub { color: var(--ink-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------------------------------------------------------------- panels */
 .panels { display: grid; gap: 16px; }

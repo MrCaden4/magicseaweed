@@ -1,5 +1,5 @@
-/* HB Pier dawn patrol page. Reads data.json (written by scripts/fetch.py) and
-   renders it. No dependencies. */
+/* Glassline HB Surf Report. Reads data.json (written by scripts/fetch.py) and
+   renders it, and polls the wind stations for the live reading. No dependencies. */
 (function () {
   'use strict';
 
@@ -131,7 +131,6 @@
     const stale = $('#stale');
     if (ageH > 30) { stale.hidden = false; stale.textContent = `Forecast is ${Math.round(ageH / 24)} day${ageH > 48 ? 's' : ''} old`; }
     else stale.hidden = true;
-    $('#loc-name').textContent = data.location?.name || 'Huntington Beach Pier';
   }
 
   function dayLabel(d) {
@@ -588,7 +587,11 @@
     grid.append(stat('First light', fmt.time(day.sun?.first_light), `sunrise ${fmt.time(day.sun?.sunrise)}`));
     grid.append(stat('Sunset', fmt.time(day.sun?.sunset), `last light ${fmt.time(day.sun?.last_light)}`));
     if (uv) grid.append(stat('UV peak', `${fmt.num(uv.peak, 1)}`, `${uv.peak_label}${uv.burn_label ? ` · burn window ${uv.burn_label}` : ' · below burn threshold'}`));
-    if (data.now && state.dayIndex === 0) grid.append(stat('Right now', data.now.temp_f != null ? fmt.deg(data.now.temp_f) : '—', [data.now.short, data.now.wind_txt ? `wind ${data.now.wind_txt} ${data.now.wind_dir || ''}` : null].filter(Boolean).join(' · ')));
+    if (data.now && state.dayIndex === 0) {
+      const lw = live.primary?.latest; // the station reading beats the forecast for "now"
+      const wind = lw ? `wind ${windText(lw)}, live` : data.now.wind_txt ? `wind ${data.now.wind_txt} ${data.now.wind_dir || ''}`.trim() : null;
+      grid.append(stat('Right now', data.now.temp_f != null ? fmt.deg(data.now.temp_f) : '—', [data.now.short, wind].filter(Boolean).join(' · ')));
+    }
     host.append(grid);
     if (w.detailed) host.append(el('p', { class: 'note', text: w.detailed }));
     if (uv?.clear_sky_peak && uv.peak < uv.clear_sky_peak - 1) host.append(el('p', { class: 'card-meta', text: `Clear-sky UV would peak near ${fmt.num(uv.clear_sky_peak, 1)}; clouds are holding it down.` }));
@@ -668,6 +671,381 @@
     $('#cams-meta').textContent = checked ? `live check ${fmt.time(checked)}` : '';
   }
 
+  // ------------------------------------------------------------ live wind
+  // data.json is rebuilt a few times a day; the wind changes by the minute. So the page
+  // polls the stations itself: NOAA CO-OPS (6-minute readings) and the NWS observation
+  // API both answer browsers directly (Access-Control-Allow-Origin: *), no key needed.
+  const KT_MPH = 1.15078, KMH_MPH = 0.621371, MS_MPH = 2.236936;
+  const COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+  const compass = (deg) => (deg == null ? null : COMPASS[Math.floor((((deg % 360) + 360 + 11.25) % 360) / 22.5)]);
+  const angDiff = (a, b) => { const d = Math.abs((a - b) % 360); return Math.min(d, 360 - d); };
+  const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+  const live = { cfg: null, timer: null, busy: false, checkedAt: null, results: [], primary: null, lastFailed: false };
+
+  async function getJSON(url) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 15000);
+    try {
+      const res = await fetch(url, { signal: ctl.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      // a TypeError is the browser's 'Failed to fetch' / 'Load failed': offline, blocked or down
+      throw new Error(err.name === 'AbortError' ? 'timed out' : err.name === 'TypeError' ? 'no answer' : err.message);
+    } finally { clearTimeout(t); }
+  }
+  async function fetchCoops(st, hours) {
+    const j = await getJSON('https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=wind'
+      + `&station=${encodeURIComponent(st.id)}&range=${hours}&units=english&time_zone=gmt&format=json`);
+    if (j.error) throw new Error(j.error.message || 'no data');
+    const num = (v) => (v === '' || v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+    const series = (j.data || []).map((r) => ({
+      t: Date.parse(`${String(r.t).replace(' ', 'T')}:00Z`),
+      mph: num(r.s) == null ? null : num(r.s) * KT_MPH, // english units are knots
+      gust: num(r.g) == null ? null : num(r.g) * KT_MPH,
+      deg: num(r.d),
+    })).filter((o) => Number.isFinite(o.t) && o.mph != null);
+    if (!series.length) throw new Error('no recent readings');
+    return { latest: series[series.length - 1], series };
+  }
+  function nwsMph(q) {
+    if (!q || q.value == null) return null;
+    const u = q.unitCode || '';
+    return q.value * (u.endsWith('m_s-1') ? MS_MPH : u.endsWith(':kn') || u.endsWith('kt') ? KT_MPH : KMH_MPH);
+  }
+  function nwsObs(p) {
+    return { t: Date.parse(p.timestamp), mph: nwsMph(p.windSpeed), gust: nwsMph(p.windGust), deg: p.windDirection?.value ?? null };
+  }
+  async function fetchNws(st, hours) {
+    const base = `https://api.weather.gov/stations/${encodeURIComponent(st.id)}/observations`;
+    if (!hours) { // one reading; the history is only fetched for the station on the chart
+      const o = nwsObs((await getJSON(`${base}/latest`)).properties || {});
+      if (!Number.isFinite(o.t) || o.mph == null) throw new Error('no wind in the latest report');
+      return { latest: o, series: [o] };
+    }
+    const start = new Date(Date.now() - hours * 36e5).toISOString().replace(/\.\d+Z$/, 'Z');
+    const j = await getJSON(`${base}?start=${encodeURIComponent(start)}`);
+    const series = (j.features || []).map((f) => nwsObs(f.properties || {}))
+      .filter((o) => Number.isFinite(o.t) && o.mph != null).sort((a, b) => a.t - b.t);
+    if (!series.length) throw new Error('no recent readings');
+    return { latest: series[series.length - 1], series };
+  }
+  const stationUrl = (st) => (st.provider === 'coops'
+    ? `https://tidesandcurrents.noaa.gov/stationhome.html?id=${encodeURIComponent(st.id)}`
+    : `https://www.weather.gov/wrh/timeseries?site=${encodeURIComponent(st.id)}`);
+  const ageMin = (o) => (Date.now() - o.t) / 6e4;
+  function since(t) {
+    const m = Math.max(0, Math.round((Date.now() - t) / 6e4));
+    return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h${m % 60 >= 5 ? ` ${m % 60} min` : ''} ago`;
+  }
+
+  async function refreshLive() {
+    const cfg = live.cfg;
+    if (!cfg || live.busy) return;
+    live.busy = true;
+    clearTimeout(live.timer);
+    try {
+      const hours = (cfg.history_h || 6) + 1;
+      const results = await Promise.all(cfg.stations.map(async (st) => {
+        try { return { st, ...(st.provider === 'coops' ? await fetchCoops(st, hours) : await fetchNws(st, 0)) }; }
+        catch (err) { return { st, error: err.message }; }
+      }));
+      // the first station (config order) with a fresh reading leads; failing that, the freshest one
+      const usable = results.filter((r) => r.latest && ageMin(r.latest) <= cfg.max_age_min);
+      const primary = usable.find((r) => ageMin(r.latest) <= cfg.live_max_age_min)
+        || usable.slice().sort((a, b) => b.latest.t - a.latest.t)[0] || null;
+      if (primary && primary.st.provider === 'nws' && primary.series.length < 2) {
+        try { Object.assign(primary, await fetchNws(primary.st, hours)); } catch (e) { /* keep the one reading */ }
+      }
+      // one failed round (a network blip) keeps the last reading on screen; it shows its age
+      if (primary || !live.primary) { live.results = results; live.primary = primary; }
+      live.lastFailed = !primary;
+      live.checkedAt = Date.now();
+    } finally {
+      live.busy = false;
+      renderLive();
+      if (state.data && state.dayIndex === 0) renderWeather(state.data, currentDay()); // its "Right now" uses the live wind
+      scheduleLive();
+    }
+  }
+  function scheduleLive() {
+    clearTimeout(live.timer);
+    if (!live.cfg || document.hidden) return; // a hidden tab stops polling; coming back checks at once
+    live.timer = setTimeout(refreshLive, (live.cfg.refresh_s || 180) * 1000);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearTimeout(live.timer); return; }
+    if (!live.checkedAt || Date.now() - live.checkedAt > 60e3) refreshLive(); else scheduleLive();
+  });
+  // "4 min ago" labels keep counting between checks
+  setInterval(() => {
+    document.querySelectorAll('[data-age]').forEach((n) => { n.textContent = since(Number(n.dataset.age)); });
+  }, 30e3);
+
+  function windQuality(mph, deg, w) {
+    if (mph == null) return null;
+    if (mph <= w.glassy_max_mph) return 'glassy';
+    if (deg != null && angDiff(deg, w.offshore_center_deg) <= w.offshore_half_width_deg) return mph <= w.bumpy_max_mph ? 'offshore' : 'strong offshore';
+    if (mph <= w.light_max_mph) return 'light texture';
+    return mph <= w.bumpy_max_mph ? 'bumpy' : 'blown out';
+  }
+  function relativeDir(deg, w) {
+    if (deg == null) return null;
+    const d = angDiff(deg, w.offshore_center_deg);
+    return d <= 22.5 ? 'offshore' : d <= 67.5 ? 'cross-offshore' : d <= 112.5 ? 'cross-shore' : d <= 157.5 ? 'cross-onshore' : 'onshore';
+  }
+  const QUALITY_PILL = { glassy: 'good', offshore: 'good', 'light texture': '', bumpy: 'warn', 'strong offshore': 'warn', 'blown out': 'bad' };
+  const isCalm = (o) => o.mph < 0.5;
+  function windText(o) {
+    if (isCalm(o)) return 'calm';
+    return `${Math.round(o.mph)} mph${compass(o.deg) ? ` ${compass(o.deg)}` : ''}`;
+  }
+  const gustText = (o) => (o.gust != null && o.gust >= o.mph + 1 ? `gusts ${Math.round(o.gust)}` : null);
+  function forecastAt(t) {
+    // the hourly forecast period that contains time t
+    for (const f of state.data?.wind_forecast || []) {
+      const t0 = Date.parse(f.time);
+      if (t >= t0 && t < t0 + 36e5) return { ...f, t: t0 };
+    }
+    return null;
+  }
+
+  // a compass with the sea half tinted and the shoreline drawn through it; the arrow
+  // points where the wind blows to, as on the morning strip, so offshore points out to sea
+  function windDial(o, faces) {
+    const s = svgEl('svg', { class: 'dial', viewBox: '0 0 100 100', 'aria-hidden': 'true' });
+    const pt = (b, r) => [50 + r * Math.sin((b * Math.PI) / 180), 50 - r * Math.cos((b * Math.PI) / 180)].map((v) => v.toFixed(2));
+    s.append(svgEl('circle', { class: 'dial-face', cx: 50, cy: 50, r: 47 }));
+    if (faces != null) {
+      const [ax, ay] = pt(faces - 90, 47), [bx, by] = pt(faces + 90, 47);
+      s.append(svgEl('path', { class: 'dial-sea', d: `M50,50L${ax},${ay}A47,47 0 0 1 ${bx},${by}Z` }));
+      s.append(svgEl('line', { class: 'dial-shore', x1: ax, y1: ay, x2: bx, y2: by }));
+    }
+    for (const b of [0, 90, 180, 270]) {
+      const [x1, y1] = pt(b, 47), [x2, y2] = pt(b, b ? 41 : 39);
+      s.append(svgEl('line', { class: 'dial-tick', x1, y1, x2, y2 }));
+    }
+    s.append(svgEl('text', { class: 'dial-n', x: 50, y: 18, 'text-anchor': 'middle', text: 'N' }));
+    if (o && !isCalm(o) && o.deg != null) {
+      s.append(svgEl('g', { transform: `rotate(${o.deg} 50 50)` }, [
+        svgEl('line', { class: 'dial-arrow', x1: 50, y1: 24, x2: 50, y2: 70 }),
+        svgEl('path', { class: 'dial-head', d: 'M39.5,64L50,79L60.5,64Z' }),
+      ]));
+    } else {
+      s.append(svgEl('circle', { class: 'dial-hub', cx: 50, cy: 50, r: 4 }));
+    }
+    return s;
+  }
+
+  function renderLive() {
+    const card = $('#live-card');
+    const cfg = live.cfg;
+    card.hidden = !cfg;
+    if (!cfg) return;
+    const rules = cfg.rules;
+    const p = live.primary;
+    const o = p?.latest;
+    const read = clear($('#live-read'));
+
+    if (!live.checkedAt) {
+      read.append(el('p', { class: 'note', text: 'Checking the wind stations…' }));
+    } else if (!o) {
+      read.append(el('p', { class: 'note', text: `None of the wind stations answered with a recent reading. Trying again in ${Math.round((cfg.refresh_s || 180) / 60)} min.` }));
+    } else {
+      const q = windQuality(o.mph, o.deg, rules);
+      const rel = isCalm(o) ? null : relativeDir(o.deg, rules);
+      const fresh = ageMin(o) <= cfg.live_max_age_min;
+      const value = isCalm(o) ? el('div', { class: 'live-val', text: 'Calm' })
+        : el('div', { class: 'live-val' }, [String(Math.round(o.mph)), el('small', { text: `mph${compass(o.deg) ? ` ${compass(o.deg)}` : ''}` })]);
+      const gust = gustText(o);
+      read.append(el('div', { class: 'live-top' }, [
+        windDial(o, cfg.beach_faces_deg),
+        el('div', { class: 'live-num' }, [
+          value,
+          el('div', { class: 'live-sub', text: [gust ? `${gust} mph` : null, o.deg != null && !isCalm(o) ? `from ${Math.round(o.deg)}°` : null].filter(Boolean).join(' · ') || 'no gust reported' }),
+          el('div', { class: 'live-tags' }, [
+            q ? el('span', { class: `pill ${QUALITY_PILL[q] || ''}`.trim(), text: cap(q) }) : null,
+            rel ? el('span', { class: 'pill', text: cap(rel) }) : null,
+          ]),
+        ]),
+      ]));
+      const st = p.st;
+      read.append(el('div', { class: 'live-src' }, [
+        fresh ? el('span', { class: 'pill live', text: 'Live' }) : el('span', { class: 'pill warn', text: 'Delayed' }),
+        el('span', {}, [
+          el('a', { href: stationUrl(st), target: '_blank', rel: 'noopener', text: st.name }),
+          st.distance_mi != null ? ` · ${st.distance_mi} mi ${st.bearing || ''}`.trimEnd() : '',
+          ' · ', el('span', { 'data-age': String(o.t), text: since(o.t) }),
+        ]),
+      ]));
+      const f = forecastAt(Date.now());
+      if (f) {
+        const d = o.mph - f.mph;
+        const verdict = Math.abs(d) < 3 ? 'Right on the forecast.' : d > 0 ? `Blowing ${Math.round(d)} mph harder than forecast.` : `${Math.round(-d)} mph lighter than forecast.`;
+        read.append(el('p', { class: 'note' }, [
+          `Forecast for ${fmt.hour(f.time)}: `, el('b', { text: f.mph < 0.5 ? 'calm' : `${Math.round(f.mph)} mph${f.dir ? ` ${f.dir}` : ''}` }), `. ${verdict}`,
+        ]));
+      }
+    }
+    const at = live.checkedAt ? fmt.time(new Date(live.checkedAt).toISOString()) : null;
+    $('#live-meta').textContent = !at ? 'checking the stations…'
+      : live.lastFailed && o ? `no answer at ${at}, showing the last reading`
+        : `checked ${at} · every ${Math.round((cfg.refresh_s || 180) / 60)} min`;
+    renderWindChart();
+    renderStations();
+  }
+
+  function renderStations() {
+    const cfg = live.cfg;
+    const ul = clear($('#live-stations'));
+    if (!live.checkedAt) return;
+    for (const r of live.results) {
+      const st = r.st;
+      const o = r.latest;
+      const a = o ? ageMin(o) : null;
+      const cls = !o || a > cfg.max_age_min ? 'off' : a > cfg.live_max_age_min ? 'stale' : '';
+      const where = [st.distance_mi != null ? `${st.distance_mi} mi ${st.bearing || ''}`.trim() : null, st.kind].filter(Boolean).join(' · ');
+      ul.append(el('li', { class: `station${r === live.primary ? ' lead' : ''}`, title: r.error || '' }, [
+        el('span', { class: `dot ${cls}`.trim() }),
+        el('span', { class: 'st-main' }, [
+          el('a', { class: 'st-name', href: stationUrl(st), target: '_blank', rel: 'noopener', text: st.name }),
+          el('span', { class: 'st-sub', text: where }),
+        ]),
+        el('span', { class: 'st-read' }, o ? [
+          el('span', { class: 'st-val', text: windText(o) }),
+          el('span', { class: 'st-sub' }, [gustText(o) ? `${gustText(o)} · ` : '', el('span', { 'data-age': String(o.t), text: since(o.t) })]),
+        ] : [el('span', { class: 'st-val muted', text: 'no reading' }), el('span', { class: 'st-sub', text: r.error || '' })]),
+      ]));
+    }
+  }
+
+  // observed wind (the lead station) against the hourly forecast, six hours either side of now
+  function renderWindChart() {
+    const host = clear($('#wind-chart'));
+    const legend = clear($('#wind-legend'));
+    const cfg = live.cfg;
+    const now = Date.now();
+    const span = (cfg.history_h || 6) * 36e5;
+    const t0 = now - span, t1 = now + span;
+    const obs = (live.primary?.series || []).filter((o) => o.t >= t0 && o.t <= now + 6e5);
+    const fc = (state.data.wind_forecast || []).map((f) => ({ ...f, t: Date.parse(f.time) + 18e5 })) // plotted mid-hour
+      .filter((f) => f.t >= t0 - 36e5 && f.t <= t1 + 36e5 && f.mph != null);
+    if (obs.length < 2 && fc.length < 2) {
+      host.append(el('p', { class: 'note', text: live.checkedAt ? 'No wind history to chart.' : '' }));
+      return;
+    }
+    const W = Math.max(280, host.clientWidth || 600);
+    const H = 200;
+    const m = { l: 30, r: 10, t: 34, b: 26 };
+    const pw = W - m.l - m.r, ph = H - m.t - m.b;
+    const top = Math.max(10, ...obs.map((o) => Math.max(o.mph, o.gust || 0)), ...fc.map((f) => f.mph));
+    const yMax = Math.ceil((top + 1) / 5) * 5;
+    const xOf = (t) => m.l + ((t - t0) / (t1 - t0)) * pw;
+    const yOf = (v) => m.t + (1 - Math.min(v, yMax) / yMax) * ph;
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': 'Observed wind against the forecast, six hours either side of now' });
+    const clipId = `wclip${Math.round(Math.random() * 1e6)}`;
+    svg.append(svgEl('defs', {}, [svgEl('clipPath', { id: clipId }, [svgEl('rect', { x: m.l, y: 0, width: pw, height: H })])]));
+    const plot = svgEl('g', { 'clip-path': `url(#${clipId})` });
+
+    svg.append(svgEl('rect', { class: 'future', x: xOf(now), y: m.t, width: Math.max(0, m.l + pw - xOf(now)), height: ph }));
+    for (let v = 0; v <= yMax; v += 5) {
+      svg.append(svgEl('line', { class: 'grid', x1: m.l, x2: W - m.r, y1: yOf(v), y2: yOf(v) }));
+      svg.append(svgEl('text', { class: 'axis', x: m.l - 6, y: yOf(v) + 4, 'text-anchor': 'end', text: `${v}` }));
+    }
+    // hour labels every three local hours (Pacific offsets are whole hours, so UTC hour boundaries line up)
+    const firstHour = Math.ceil(t0 / 36e5) * 36e5;
+    for (let t = firstHour; t <= t1; t += 36e5) {
+      const iso = new Date(t).toISOString();
+      const h = Number(laFmt({ hour: 'numeric', hour12: false }).format(new Date(t))) % 24;
+      const x = xOf(t);
+      if (h % 3 || x < m.l + 14 || x > W - m.r - 14) continue;
+      svg.append(svgEl('text', { class: 'axis', x, y: H - 8, 'text-anchor': 'middle', text: fmt.hour(iso).replace(' ', ' ') }));
+    }
+
+    // forecast: dashed
+    if (fc.length > 1) {
+      plot.append(svgEl('path', { class: 'fcst', d: fc.map((f, i) => `${i ? 'L' : 'M'}${xOf(f.t).toFixed(1)},${yOf(f.mph).toFixed(1)}`).join('') }));
+    }
+    // observed: soft area and a line, broken where the station skipped more than half an hour; gusts dotted
+    const runs = [];
+    for (const o of obs) {
+      const last = runs[runs.length - 1];
+      if (last && o.t - last[last.length - 1].t <= 18e5) last.push(o); else runs.push([o]);
+    }
+    for (const run of runs) {
+      const d = run.map((o, i) => `${i ? 'L' : 'M'}${xOf(o.t).toFixed(1)},${yOf(o.mph).toFixed(1)}`).join('');
+      if (run.length > 1) {
+        plot.append(svgEl('path', { class: 'area', d: `${d}L${xOf(run[run.length - 1].t).toFixed(1)},${yOf(0)}L${xOf(run[0].t).toFixed(1)},${yOf(0)}Z` }));
+        plot.append(svgEl('path', { class: 'line', d }));
+      }
+      const g = run.filter((o) => o.gust != null);
+      if (g.length > 1) plot.append(svgEl('path', { class: 'gust', d: g.map((o, i) => `${i ? 'L' : 'M'}${xOf(o.t).toFixed(1)},${yOf(o.gust).toFixed(1)}`).join('') }));
+    }
+    svg.append(plot);
+
+    // direction along the top, one arrow an hour: observed (averaged) behind now, forecast ahead
+    const arrowRow = svgEl('g', { class: 'dir-row' });
+    for (let t = Math.floor(t0 / 36e5) * 36e5; t < t1; t += 36e5) {
+      const x = xOf(t + 18e5);
+      if (x < m.l + 4 || x > W - m.r - 4) continue;
+      let deg = null, mph = null, past = false;
+      const inHour = obs.filter((o) => o.t >= t && o.t < t + 36e5);
+      if (inHour.length && t < now) {
+        let u = 0, v = 0;
+        for (const o of inHour) { if (o.deg != null) { u += o.mph * Math.sin((o.deg * Math.PI) / 180); v += o.mph * Math.cos((o.deg * Math.PI) / 180); } }
+        mph = inHour.reduce((s, o) => s + o.mph, 0) / inHour.length;
+        deg = Math.hypot(u, v) > 0.1 ? ((Math.atan2(u, v) * 180) / Math.PI + 360) % 360 : null;
+        past = true;
+      } else if (t + 36e5 > now) {
+        const f = forecastAt(t);
+        if (f) { deg = f.deg; mph = f.mph; }
+      }
+      if (mph == null) continue;
+      const cls = `dir${past ? ' obs' : ''}`;
+      if (deg == null || mph < 0.5) arrowRow.append(svgEl('circle', { class: cls, cx: x, cy: m.t - 17, r: 1.8 }));
+      else arrowRow.append(svgEl('path', { class: cls, d: 'M0,-6V6M-3.6,2L0,6L3.6,2', transform: `translate(${x.toFixed(1)},${m.t - 17}) rotate(${Math.round(deg)})` }));
+    }
+    svg.append(arrowRow);
+
+    // now
+    const xn = xOf(now);
+    svg.append(svgEl('line', { class: 'now', x1: xn, x2: xn, y1: m.t, y2: m.t + ph }));
+    svg.append(svgEl('text', { class: 'now-lbl', x: xn + 5, y: m.t + 10, text: 'now' }));
+    const lastObs = obs[obs.length - 1];
+    if (lastObs) svg.append(svgEl('circle', { class: 'obs-dot', cx: xOf(lastObs.t), cy: yOf(lastObs.mph), r: 4.5 }));
+
+    // hover
+    const xh = svgEl('line', { class: 'xhair', x1: 0, x2: 0, y1: m.t, y2: m.t + ph, visibility: 'hidden' });
+    const xd = svgEl('circle', { class: 'xdot', r: 4, visibility: 'hidden' });
+    const hit = svgEl('rect', { class: 'hit', x: m.l, y: m.t, width: pw, height: ph });
+    hit.addEventListener('pointermove', (e) => {
+      const r = svg.getBoundingClientRect();
+      const t = t0 + ((((e.clientX - r.left) / r.width) * W - m.l) / pw) * (t1 - t0);
+      let near = null;
+      for (const o of obs) if (Math.abs(o.t - t) <= 9e5 && (!near || Math.abs(o.t - t) < Math.abs(near.t - t))) near = o;
+      const f = forecastAt(t);
+      const x = near ? xOf(near.t) : xOf(t);
+      xh.setAttribute('x1', x); xh.setAttribute('x2', x); xh.setAttribute('visibility', 'visible');
+      if (near) { xd.setAttribute('cx', x); xd.setAttribute('cy', yOf(near.mph)); xd.setAttribute('visibility', 'visible'); } else xd.setAttribute('visibility', 'hidden');
+      showTip([
+        fmt.time(new Date(near ? near.t : t).toISOString()),
+        near ? `observed ${windText(near)}${gustText(near) ? `, ${gustText(near)}` : ''}` : null,
+        f ? `forecast ${f.mph < 0.5 ? 'calm' : `${Math.round(f.mph)} mph${f.dir ? ` ${f.dir}` : ''}`}` : null,
+      ], e.clientX, e.clientY);
+    });
+    hit.addEventListener('pointerleave', () => { xh.setAttribute('visibility', 'hidden'); xd.setAttribute('visibility', 'hidden'); hideTip(); });
+    svg.append(xh, xd, hit);
+    host.append(svg);
+
+    const src = live.primary?.st?.name;
+    legend.append(...[
+      obs.length ? el('span', {}, [el('i', { class: 'sw obs' }), `observed${src ? `, ${src}` : ''}`]) : null,
+      obs.some((o) => o.gust != null) ? el('span', {}, [el('i', { class: 'sw gust' }), 'gusts']) : null,
+      fc.length ? el('span', {}, [el('i', { class: 'sw fcst' }), 'forecast']) : null,
+      el('span', {}, ['arrows: where the wind blows to']),
+    ].filter(Boolean));
+  }
+
   // ------------------------------------------------------------ render: sources
   function renderSources(data) {
     const ul = $('#sources');
@@ -721,7 +1099,12 @@
       renderAll();
       $('#main').hidden = false;
       $('#loading').hidden = true;
-      fitWindowKpi(); // the first renderAll ran while #main was hidden
+      // the first renderAll ran while #main was hidden: fit the KPI and size the charts to the real width
+      fitWindowKpi();
+      renderTide(data, currentDay());
+      live.cfg = data.live_wind?.stations?.length ? data.live_wind : null;
+      renderLive();
+      refreshLive();
       if (document.fonts?.ready) document.fonts.ready.then(fitWindowKpi); // the web font changes the widths
     } catch (err) {
       $('#loading').hidden = true;
@@ -734,7 +1117,7 @@
   let resizeT = null;
   window.addEventListener('resize', () => {
     clearTimeout(resizeT);
-    resizeT = setTimeout(() => { if (state.data) { renderTide(state.data, currentDay()); fitWindowKpi(); } }, 120);
+    resizeT = setTimeout(() => { if (state.data) { renderTide(state.data, currentDay()); if (live.cfg) renderWindChart(); fitWindowKpi(); } }, 120);
   });
 
   boot();
